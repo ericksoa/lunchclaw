@@ -1,19 +1,17 @@
-# LunchClaw 🦀
+# LunchClaw
 
-A NemoClaw-based agent that orders healthy lunch from Uber Eats via Telegram.
+A NemoClaw-based agent that orders healthy lunch via Telegram.
 
-Tell it what you're in the mood for. It browses Uber Eats, filters for healthy
-options, checks variety against your recent orders, and places the order after
-confirming you're home.
+Tell it what you're in the mood for. It searches for healthy options, checks variety against your recent orders, and places the order after confirming you're home.
 
 ## How It Works
 
 ```
-You (Telegram) → LunchClaw (OpenClaw agent in NemoClaw sandbox)
+You (Telegram) → LunchClaw (OpenClaw agent in OpenShell sandbox)
                       ↓
-              Playwright browses Uber Eats
+              hungry-cli searches restaurants
                       ↓
-              Filters for healthy options
+              Filters for healthy options + variety
                       ↓
               Presents 2-3 picks via Telegram
                       ↓
@@ -22,42 +20,103 @@ You (Telegram) → LunchClaw (OpenClaw agent in NemoClaw sandbox)
               Places the order
 ```
 
+## NemoClaw Deployment
+
+LunchClaw runs inside an [OpenShell](https://github.com/NVIDIA/OpenShell) sandbox provisioned via [NemoClaw](https://github.com/NVIDIA/NemoClaw). This provides:
+
+- **Sandbox isolation** — filesystem restricted to `/sandbox`, no host access
+- **Network policy** — only delivery service, Telegram API, and npm registry are reachable
+- **Binary-level restrictions** — only `node` and `chromium` can make outbound connections
+- **Process isolation** — no privilege escalation, no root
+- **OpenClaw workspace** — agent personality and memory at `/sandbox/.openclaw/workspace/`
+
+### How Primitives Are Used
+
+| Primitive | What We Use It For |
+|-----------|-------------------|
+| `openshell sandbox create --from openclaw` | Create isolated sandbox from OpenClaw community image |
+| `openshell sandbox upload` | Deploy hungry-cli + bot code into sandbox |
+| `openshell policy set --policy network.yaml` | Apply restrictive network whitelist |
+| OpenClaw workspace files | Agent personality (SOUL.md), identity, preferences, safety rules |
+| `openshell sandbox connect` | Interactive access for auth and debugging |
+
+### What We Don't Do
+
+- No workarounds to bypass sandbox security
+- No credentials stored on disk (injected as env vars at runtime)
+- No root access or privileged operations
+- No outbound connections to unauthorized hosts
+
 ## Prerequisites
 
-- [NemoClaw](https://github.com/NVIDIA/NemoClaw) installed and working
+- [NemoClaw](https://github.com/NVIDIA/NemoClaw) or [OpenShell](https://github.com/NVIDIA/OpenShell) installed
+- Docker running
+- [hungry-cli](../hungry-cli) cloned alongside this repo
 - A Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - Your Telegram user ID (from [@userinfobot](https://t.me/userinfobot))
-- An Uber Eats account (you'll log in inside the sandbox)
+- A delivery service account
 
 ## Setup
 
-1. Edit `workspace/USER.md` with your delivery address.
+### 1. Create the sandbox
 
-2. Run the setup script:
-   ```bash
-   ./scripts/setup.sh
-   ```
+```bash
+openshell sandbox create --name lunchclaw-demo --from openclaw
+```
 
-3. Set environment variables inside the sandbox:
-   ```bash
-   openshell sandbox exec lunchclaw -- bash -c '
-     echo "TELEGRAM_BOT_TOKEN=your-token-here" >> /sandbox/.env
-     echo "TELEGRAM_ALLOWED_USER_ID=your-id-here" >> /sandbox/.env
-     echo "DELIVERY_ADDRESS=your-address-here" >> /sandbox/.env
-   '
-   ```
+### 2. Apply network policy
 
-4. Log into Uber Eats (one-time, saves session):
-   ```bash
-   openshell sandbox exec lunchclaw -- npm run --prefix /sandbox/lunchclaw auth
-   ```
+```bash
+openshell policy set --policy policies/network.yaml --wait lunchclaw-demo
+```
 
-5. Start the bot:
-   ```bash
-   openshell sandbox exec lunchclaw -- npm start --prefix /sandbox/lunchclaw
-   ```
+### 3. Upload code
 
-6. Message your bot on Telegram: "hungry, something with chicken"
+```bash
+# Upload hungry-cli (with built dist/)
+openshell sandbox upload --no-git-ignore lunchclaw-demo ../hungry-cli /sandbox/hungry-cli
+
+# Upload lunchclaw bot (with built dist/)
+openshell sandbox upload --no-git-ignore lunchclaw-demo sandbox-app /sandbox/lunchclaw
+
+# Upload workspace files
+openshell sandbox upload lunchclaw-demo workspace /sandbox/.openclaw/workspace
+
+# Install dependencies inside sandbox
+ssh openshell-lunchclaw-demo 'cd /sandbox/hungry-cli && npm install --omit=dev'
+ssh openshell-lunchclaw-demo 'cd /sandbox/lunchclaw && npm install --omit=dev'
+```
+
+### 4. Configure environment
+
+Set these inside the sandbox:
+
+```bash
+ssh openshell-lunchclaw-demo 'cat >> /sandbox/.env << EOF
+TELEGRAM_BOT_TOKEN=your-token-here
+TELEGRAM_ALLOWED_USER_ID=your-user-id
+DELIVERY_ADDRESS=your-address-here
+HUNGRY_CLI_PATH=/sandbox/hungry-cli/dist/cli.js
+EOF'
+```
+
+### 5. Auth (one-time)
+
+Log into your delivery service inside the sandbox:
+
+```bash
+ssh openshell-lunchclaw-demo 'node /sandbox/hungry-cli/dist/cli.js auth'
+```
+
+### 6. Start the bot
+
+```bash
+ssh openshell-lunchclaw-demo 'cd /sandbox/lunchclaw && node dist/bot.js'
+```
+
+### 7. Message your bot
+
+Open Telegram and send: "hungry, something with chicken"
 
 ## Project Structure
 
@@ -69,21 +128,29 @@ lunchclaw/
 │   ├── USER.md          # Your address, preferences, budget
 │   └── AGENTS.md        # Tool descriptions, safety rules
 ├── policies/
-│   └── ubereats.yaml    # Network policy allowing Uber Eats access
+│   ├── network.yaml     # Hardened network policy (delivery + Telegram only)
+│   └── ubereats.yaml    # Legacy policy (superseded by network.yaml)
 ├── sandbox-app/         # Code that runs INSIDE the sandbox
-│   ├── bot.js           # Telegram bot + conversation state machine
-│   ├── ubereats.js      # Playwright automation for Uber Eats
-│   ├── history.js       # Order tracking + OpenClaw memory integration
+│   ├── bot.ts           # Telegram bot + conversation state machine
+│   ├── hungry.ts        # Thin wrapper — shells out to hungry-cli
+│   ├── history.ts       # Order tracking + OpenClaw memory integration
+│   ├── keywords.ts      # Food keyword extraction from casual messages
 │   └── package.json
 ├── scripts/
-│   └── setup.sh         # One-shot provisioning script
+│   └── setup.sh         # Automated provisioning script
+├── CLAUDE.md            # Build plan
 └── README.md
 ```
 
 ## Security
 
-- Runs inside a NemoClaw sandbox (filesystem isolation, network policy)
-- Only `www.ubereats.com`, `*.uber.com`, and Telegram API are network-accessible
-- Only YOUR Telegram user ID can interact with the bot
-- Uber Eats session is sandboxed — no access to host browser cookies
-- Payment details are never stored or logged by LunchClaw
+- **Sandbox isolation** — runs inside OpenShell container, filesystem limited to `/sandbox`
+- **Network whitelist** — only delivery service + Telegram API reachable, with binary-level restrictions
+- **Owner-only access** — only your Telegram user ID can interact with the bot
+- **No payment storage** — delivery service handles all payment; LunchClaw never sees card details
+- **Session isolation** — browser session is sandboxed, not accessible from host
+- **Budget enforcement** — configurable max per order (default $30)
+
+## License
+
+[Apache 2.0](../hungry-cli/LICENSE)
