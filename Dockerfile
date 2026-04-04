@@ -1,16 +1,20 @@
-# LunchClaw sandbox image — OpenClaw + Playwright system dependencies.
-# Build: openshell sandbox create --name lunchclaw-prod --from . --policy policies/network.yaml
+# LunchClaw sandbox image.
 #
-# This extends the OpenClaw community image with the system libraries
-# Playwright needs for headless Chromium. The OpenShell sandbox security
-# model prevents installing packages at runtime (no root), so they
-# must be baked into the image.
+# Matches NemoClaw's pinned dependencies (Dockerfile.base from NVIDIA/NemoClaw)
+# plus Playwright system libraries for browser automation.
+#
+# Build via: openshell sandbox create --name lunchclaw --from .
 
-FROM ghcr.io/nvidia/openshell-community/sandboxes/openclaw:latest
+# Same base image NemoClaw uses
+FROM node:22-slim
 
-USER root
+# Install OpenClaw CLI — pinned to the version NemoClaw is tested against
+# See: https://github.com/NVIDIA/NemoClaw/blob/main/Dockerfile.base
+RUN npm install -g openclaw@2026.3.11
 
-# Install Playwright's Chromium system dependencies
+# Install Playwright's Chromium system dependencies.
+# The OpenShell sandbox security model prevents installing packages at
+# runtime (no root access), so they must be baked into the image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0t64 \
     libnspr4 \
@@ -33,6 +37,3 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrandr2 \
     libatspi2.0-0t64 \
     && rm -rf /var/lib/apt/lists/*
-
-# Drop back to sandbox user
-USER sandbox
