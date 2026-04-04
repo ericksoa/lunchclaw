@@ -41,8 +41,14 @@ cmd_setup() {
     echo "  LunchClaw Setup"
     echo "  ==============="
     echo -e "${NC}"
-    echo "  This will create a secure NemoClaw sandbox and deploy the"
-    echo "  LunchClaw food ordering bot."
+    echo "  A healthy food ordering bot for Telegram."
+    echo ""
+    echo "  Powered by:"
+    echo "    NVIDIA NemoClaw  https://github.com/NVIDIA/NemoClaw"
+    echo "    NVIDIA OpenShell https://github.com/NVIDIA/OpenShell"
+    echo ""
+    echo "  LunchClaw runs inside a secure OpenShell sandbox with"
+    echo "  network isolation, filesystem restrictions, and policy-enforced access."
     echo ""
 
     # --- Prerequisites ---
