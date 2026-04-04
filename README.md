@@ -20,7 +20,13 @@ You (Telegram) → LunchClaw (OpenClaw agent in OpenShell sandbox)
               Places the order
 ```
 
-## Quick Start
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ericksoa/lunchclaw/main/install.sh | bash
+```
+
+Or clone manually:
 
 ```bash
 git clone https://github.com/ericksoa/lunchclaw.git && cd lunchclaw
