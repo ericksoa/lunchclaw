@@ -1,12 +1,49 @@
 // LunchClaw Telegram bot — runs inside a NemoClaw sandbox.
 // Uses hungry-cli as the backend for food delivery automation.
 
+import "dotenv/config";
 import { Telegraf } from "telegraf";
 import { extractKeywords } from "./keywords.js";
-import { hungrySearch, hungryCartAdd, hungryCartClear, hungryOrder, type SearchResult } from "./hungry.js";
+import { hungrySearch, hungryCartAdd, hungryCartClear, hungryOrder, hungryAuthCheck, type SearchResult } from "./hungry.js";
 import { recordOrder, getRecentRestaurants } from "./history.js";
 
-// Health-biased keywords for filtering search results
+// ---------------------------------------------------------------------------
+// Logging
+// ---------------------------------------------------------------------------
+
+function log(level: "info" | "warn" | "error", msg: string, data?: Record<string, unknown>): void {
+  const entry = {
+    ts: new Date().toISOString(),
+    level,
+    msg,
+    ...data,
+  };
+  if (level === "error") console.error(JSON.stringify(entry));
+  else console.log(JSON.stringify(entry));
+}
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const ALLOWED_USER = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
+const DELIVERY_ADDRESS = process.env.DELIVERY_ADDRESS || "your address";
+const BUDGET_MAX = Number(process.env.BUDGET_MAX || "30");
+
+if (!TELEGRAM_TOKEN) {
+  log("error", "TELEGRAM_BOT_TOKEN is required. Set it in /sandbox/.env");
+  process.exit(1);
+}
+if (!ALLOWED_USER) {
+  log("error", "TELEGRAM_ALLOWED_USER_ID is required. Set it in /sandbox/.env");
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// Health scoring
+// ---------------------------------------------------------------------------
+
 const HEALTHY_KEYWORDS = new Set([
   "salad", "bowl", "poke", "grain", "quinoa", "kale", "mediterranean",
   "sushi", "japanese", "korean", "thai", "vietnamese", "grilled",
@@ -18,47 +55,6 @@ const UNHEALTHY_KEYWORDS = new Set([
   "jack in the box", "kfc", "popeye", "domino",
 ]);
 
-interface FoodOption {
-  itemName: string;
-  restaurant: string;
-  restaurantUrl: string;
-  price: string;
-  eta: string;
-}
-
-interface Session {
-  state: "idle" | "searching" | "choosing" | "confirming";
-  options: FoodOption[];
-  selected: FoodOption | null;
-}
-
-const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const ALLOWED_USER = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
-const DELIVERY_ADDRESS = process.env.DELIVERY_ADDRESS || "your address";
-const BUDGET_MAX = Number(process.env.BUDGET_MAX || "30");
-
-if (!TELEGRAM_TOKEN) {
-  console.error("TELEGRAM_BOT_TOKEN is required");
-  process.exit(1);
-}
-if (!ALLOWED_USER) {
-  console.error("TELEGRAM_ALLOWED_USER_ID is required");
-  process.exit(1);
-}
-
-const bot = new Telegraf(TELEGRAM_TOKEN);
-
-let session: Session = {
-  state: "idle",
-  options: [],
-  selected: null,
-};
-
-function resetSession(): void {
-  session = { state: "idle", options: [], selected: null };
-}
-
-/** Score a search result for health. Higher = healthier. */
 function healthScore(r: SearchResult): number {
   const text = `${r.restaurant} ${r.description}`.toLowerCase();
   let score = 50;
@@ -74,7 +70,6 @@ function healthScore(r: SearchResult): number {
   return score;
 }
 
-/** Filter and rank results: healthy bias + variety. */
 function rankResults(results: SearchResult[]): FoodOption[] {
   const recentRestaurants = new Set(getRecentRestaurants(3));
 
@@ -95,22 +90,54 @@ function rankResults(results: SearchResult[]): FoodOption[] {
     }));
 }
 
+// ---------------------------------------------------------------------------
+// Types & state
+// ---------------------------------------------------------------------------
+
+interface FoodOption {
+  itemName: string;
+  restaurant: string;
+  restaurantUrl: string;
+  price: string;
+  eta: string;
+}
+
+interface Session {
+  state: "idle" | "searching" | "choosing" | "confirming";
+  options: FoodOption[];
+  selected: FoodOption | null;
+}
+
+let session: Session = { state: "idle", options: [], selected: null };
+
+function resetSession(): void {
+  session = { state: "idle", options: [], selected: null };
+}
+
 function formatOptions(options: FoodOption[]): string {
   return options
     .map((o, i) =>
-      `${i + 1}. *${o.restaurant}*\n   ${[o.price, o.eta, o.itemName !== o.restaurant ? o.itemName : ""].filter(Boolean).join(" · ")}`,
+      `${i + 1}. *${o.restaurant}*\n   ${[o.price, o.eta].filter(Boolean).join(" · ")}`,
     )
     .join("\n\n");
 }
 
+// ---------------------------------------------------------------------------
+// Bot setup
+// ---------------------------------------------------------------------------
+
+const bot = new Telegraf(TELEGRAM_TOKEN);
+
 // Only respond to the owner
 bot.use((ctx, next) => {
   if (ctx.from?.id !== ALLOWED_USER) {
+    log("warn", "Unauthorized access attempt", { userId: ctx.from?.id });
     return ctx.reply("Sorry, I only take orders from my human.");
   }
   return next();
 });
 
+// /start
 bot.command("start", (ctx) =>
   ctx.reply(
     "Hey! I'm LunchClaw.\n\n" +
@@ -122,10 +149,28 @@ bot.command("start", (ctx) =>
   ),
 );
 
+// /cancel
 bot.command("cancel", (ctx) => {
   resetSession();
   ctx.reply("Cancelled. Ping me when you're hungry.");
 });
+
+// /status — health check
+bot.command("status", async (ctx) => {
+  const authOk = await hungryAuthCheck().catch(() => false);
+  const lines = [
+    `LunchClaw is running.`,
+    `Auth: ${authOk ? "valid" : "expired — run auth again"}`,
+    `Address: ${DELIVERY_ADDRESS}`,
+    `Budget: $${BUDGET_MAX}`,
+    `State: ${session.state}`,
+  ];
+  ctx.reply(lines.join("\n"));
+});
+
+// ---------------------------------------------------------------------------
+// Message handler
+// ---------------------------------------------------------------------------
 
 bot.on("text", async (ctx) => {
   const text = ctx.message.text;
@@ -142,19 +187,33 @@ bot.on("text", async (ctx) => {
 
       try {
         await ctx.reply("Placing your order...");
+        log("info", "Placing order", { restaurant: s.restaurant, item: s.itemName });
 
-        // Clear any previous cart, add the selected item, and order
         await hungryCartClear();
         await hungryCartAdd(s.restaurantUrl, s.itemName);
+
+        // Preview first — check budget
+        const preview = await hungryOrder(false);
+        const totalNum = parseFloat(preview.total.replace("$", ""));
+        if (totalNum > BUDGET_MAX) {
+          resetSession();
+          return ctx.reply(
+            `That would be ${preview.total} — over your $${BUDGET_MAX} budget.\n` +
+              `Try something cheaper, or /cancel.`,
+          );
+        }
+
+        // Place the order
         const result = await hungryOrder(true);
 
-        // Record for variety tracking
         recordOrder({
           item: s.itemName,
           restaurant: s.restaurant,
           price: result.total || s.price,
           eta: result.eta,
         });
+
+        log("info", "Order placed", { restaurant: s.restaurant, total: result.total });
 
         await ctx.reply(
           `Order placed!\n\n` +
@@ -166,6 +225,7 @@ bot.on("text", async (ctx) => {
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        log("error", "Order failed", { error: msg });
         await ctx.reply(`Failed to place order: ${msg}\nTry again or /cancel.`);
       }
 
@@ -209,6 +269,7 @@ bot.on("text", async (ctx) => {
   const keywords = extractKeywords(text);
   const query = keywords.join(" ");
   session.state = "searching";
+  log("info", "Search request", { query, keywords });
 
   try {
     await ctx.reply(`Looking for: ${keywords.join(", ")}...`);
@@ -235,14 +296,29 @@ bot.on("text", async (ctx) => {
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    log("error", "Search failed", { error: msg, query });
     await ctx.reply(`Search failed: ${msg}`);
     resetSession();
   }
 });
 
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+// ---------------------------------------------------------------------------
+// Startup
+// ---------------------------------------------------------------------------
+
+process.once("SIGINT", () => { log("info", "Shutting down (SIGINT)"); bot.stop("SIGINT"); });
+process.once("SIGTERM", () => { log("info", "Shutting down (SIGTERM)"); bot.stop("SIGTERM"); });
+
+// Catch unhandled errors to prevent crash
+process.on("uncaughtException", (err) => {
+  log("error", "Uncaught exception", { error: err.message, stack: err.stack });
+});
+process.on("unhandledRejection", (reason) => {
+  log("error", "Unhandled rejection", { error: String(reason) });
+});
+
+log("info", "Starting LunchClaw", { address: DELIVERY_ADDRESS, budget: BUDGET_MAX });
 
 bot.launch().then(() => {
-  console.log("LunchClaw is running! Waiting for messages...");
+  log("info", "LunchClaw is running", { user: ALLOWED_USER });
 });

@@ -48,6 +48,31 @@ network_policies:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
 
+  # Playwright browser downloads — required during initial setup only.
+  # Uses full access (not TLS-terminated REST) because CDNs reject
+  # requests when TLS is terminated by the proxy.
+  # Can be removed from policy after chromium is installed.
+  playwright_setup:
+    endpoints:
+      - host: "cdn.playwright.dev"
+        port: 443
+        access: full
+      - host: "playwright.download.prss.microsoft.com"
+        port: 443
+        access: full
+      - host: "playwright.azureedge.net"
+        port: 443
+        access: full
+      - host: "storage.googleapis.com"
+        port: 443
+        access: full
+      - host: "edgedl.me.gvt1.com"
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+
   # npm registry — required for package installation during setup
   npm_registry:
     endpoints:
