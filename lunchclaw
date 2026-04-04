@@ -126,19 +126,28 @@ EOF
     echo "    Config saved to .env.local"
     ok
 
-    # --- Create sandbox ---
-    step "Creating sandbox"
+    # --- Create sandbox via NemoClaw ---
+    step "Creating NemoClaw sandbox"
 
-    if openshell sandbox list 2>/dev/null | awk '{print $1}' | grep -qx "$SANDBOX_NAME"; then
+    if nemoclaw list 2>/dev/null | awk '{print $1}' | grep -qx "$SANDBOX_NAME"; then
         echo "    Sandbox '$SANDBOX_NAME' already exists."
     else
-        openshell sandbox create --name "$SANDBOX_NAME" --from "$SCRIPT_DIR/Dockerfile"
+        echo "    Running nemoclaw onboard with LunchClaw defaults..."
+        # shellcheck disable=SC1091
+        source "$SCRIPT_DIR/.env.local"
+        export NEMOCLAW_NON_INTERACTIVE=1
+        export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
+        export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
+        export NEMOCLAW_PROVIDER="${NEMOCLAW_PROVIDER:-cloud}"
+        export NEMOCLAW_POLICY_PRESETS="npm,telegram"
+        export TELEGRAM_BOT_TOKEN
+        nemoclaw onboard
     fi
     ensure_ssh_config
     ok
 
-    # --- Apply policy ---
-    step "Applying network policy"
+    # --- Apply LunchClaw network policy (adds delivery service access) ---
+    step "Applying LunchClaw network policy"
     openshell policy set --policy "$SCRIPT_DIR/policies/network.yaml" --wait "$SANDBOX_NAME"
     ok
 
