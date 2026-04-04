@@ -20,6 +20,42 @@ You (Telegram) → LunchClaw (OpenClaw agent in OpenShell sandbox)
               Places the order
 ```
 
+## Quick Start
+
+```bash
+git clone https://github.com/ericksoa/lunchclaw.git && cd lunchclaw
+./lunchclaw setup
+```
+
+The setup wizard handles everything:
+- Builds hungry-cli and the bot
+- Creates a secure NemoClaw sandbox
+- Applies network policy
+- Deploys code and installs dependencies
+- Prompts for your Telegram bot token and delivery address
+- Opens a browser for delivery service auth
+- Starts the bot
+
+After setup, manage the bot with:
+
+```bash
+./lunchclaw status    # Check health
+./lunchclaw logs      # Stream logs
+./lunchclaw stop      # Stop the bot
+./lunchclaw start     # Start the bot
+./lunchclaw update    # Rebuild and redeploy
+./lunchclaw auth      # Re-authenticate delivery service
+./lunchclaw destroy   # Remove sandbox (permanent)
+```
+
+## Prerequisites
+
+- [NemoClaw](https://github.com/NVIDIA/NemoClaw) installed (includes OpenShell)
+- Docker running
+- Node.js 22+
+- A Telegram bot token (from [@BotFather](https://t.me/BotFather))
+- Your Telegram user ID (from [@userinfobot](https://t.me/userinfobot))
+
 ## NemoClaw Deployment
 
 LunchClaw runs inside an [OpenShell](https://github.com/NVIDIA/OpenShell) sandbox provisioned via [NemoClaw](https://github.com/NVIDIA/NemoClaw). This provides:
@@ -47,76 +83,9 @@ LunchClaw runs inside an [OpenShell](https://github.com/NVIDIA/OpenShell) sandbo
 - No root access or privileged operations
 - No outbound connections to unauthorized hosts
 
-## Prerequisites
+## Manual Setup (Advanced)
 
-- [NemoClaw](https://github.com/NVIDIA/NemoClaw) or [OpenShell](https://github.com/NVIDIA/OpenShell) installed
-- Docker running
-- [hungry-cli](../hungry-cli) cloned alongside this repo
-- A Telegram bot token (from [@BotFather](https://t.me/BotFather))
-- Your Telegram user ID (from [@userinfobot](https://t.me/userinfobot))
-- A delivery service account
-
-## Setup
-
-### 1. Create the sandbox
-
-```bash
-openshell sandbox create --name lunchclaw-demo --from openclaw
-```
-
-### 2. Apply network policy
-
-```bash
-openshell policy set --policy policies/network.yaml --wait lunchclaw-demo
-```
-
-### 3. Upload code
-
-```bash
-# Upload hungry-cli (with built dist/)
-openshell sandbox upload --no-git-ignore lunchclaw-demo ../hungry-cli /sandbox/hungry-cli
-
-# Upload lunchclaw bot (with built dist/)
-openshell sandbox upload --no-git-ignore lunchclaw-demo sandbox-app /sandbox/lunchclaw
-
-# Upload workspace files
-openshell sandbox upload lunchclaw-demo workspace /sandbox/.openclaw/workspace
-
-# Install dependencies inside sandbox
-ssh openshell-lunchclaw-demo 'cd /sandbox/hungry-cli && npm install --omit=dev'
-ssh openshell-lunchclaw-demo 'cd /sandbox/lunchclaw && npm install --omit=dev'
-```
-
-### 4. Configure environment
-
-Set these inside the sandbox:
-
-```bash
-ssh openshell-lunchclaw-demo 'cat >> /sandbox/.env << EOF
-TELEGRAM_BOT_TOKEN=your-token-here
-TELEGRAM_ALLOWED_USER_ID=your-user-id
-DELIVERY_ADDRESS=your-address-here
-HUNGRY_CLI_PATH=/sandbox/hungry-cli/dist/cli.js
-EOF'
-```
-
-### 5. Auth (one-time)
-
-Log into your delivery service inside the sandbox:
-
-```bash
-ssh openshell-lunchclaw-demo 'node /sandbox/hungry-cli/dist/cli.js auth'
-```
-
-### 6. Start the bot
-
-```bash
-ssh openshell-lunchclaw-demo 'cd /sandbox/lunchclaw && node dist/bot.js'
-```
-
-### 7. Message your bot
-
-Open Telegram and send: "hungry, something with chicken"
+If you prefer manual control over each step, read the `./lunchclaw` script source — it's well-commented bash.
 
 ## Project Structure
 

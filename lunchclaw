@@ -1,0 +1,298 @@
+#!/usr/bin/env bash
+# LunchClaw — healthy food ordering agent via Telegram.
+#
+# Usage:
+#   ./lunchclaw setup     Interactive setup wizard (first time)
+#   ./lunchclaw start     Start the bot
+#   ./lunchclaw stop      Stop the bot
+#   ./lunchclaw status    Check bot health
+#   ./lunchclaw logs      Stream bot logs
+#   ./lunchclaw update    Rebuild and redeploy code
+#   ./lunchclaw destroy   Remove the sandbox
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SANDBOX_NAME="lunchclaw"
+SSH_HOST="openshell-${SANDBOX_NAME}"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+step()  { echo -e "\n${BOLD}==> $1${NC}"; }
+ok()    { echo -e "    ${GREEN}OK${NC}"; }
+warn()  { echo -e "    ${YELLOW}$1${NC}"; }
+fail()  { echo -e "    ${RED}$1${NC}"; exit 1; }
+
+ensure_ssh_config() {
+    if ! grep -q "openshell-${SANDBOX_NAME}" ~/.ssh/config 2>/dev/null; then
+        openshell sandbox ssh-config "$SANDBOX_NAME" >> ~/.ssh/config
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# setup — interactive first-time wizard
+# ---------------------------------------------------------------------------
+cmd_setup() {
+    echo -e "${BOLD}"
+    echo "  LunchClaw Setup"
+    echo "  ==============="
+    echo -e "${NC}"
+    echo "  This will create a secure NemoClaw sandbox and deploy the"
+    echo "  LunchClaw food ordering bot."
+    echo ""
+
+    # --- Prerequisites ---
+    step "Checking prerequisites"
+
+    command -v openshell >/dev/null 2>&1 || fail "openshell not found. Install NemoClaw first: https://github.com/NVIDIA/NemoClaw"
+    command -v docker >/dev/null 2>&1 || fail "Docker not found. Install Docker first."
+    command -v node >/dev/null 2>&1 || fail "Node.js not found. Install Node.js 22+ first."
+    command -v npm >/dev/null 2>&1 || fail "npm not found."
+
+    # Check for hungry-cli
+    if [ ! -d "$SCRIPT_DIR/../hungry-cli" ]; then
+        step "Cloning hungry-cli"
+        git clone https://github.com/ericksoa/hungry-cli.git "$SCRIPT_DIR/../hungry-cli"
+    fi
+    ok
+
+    # --- Build locally ---
+    step "Building hungry-cli"
+    (cd "$SCRIPT_DIR/../hungry-cli" && npm install --silent && npm run build) 2>&1 | tail -1
+    ok
+
+    step "Building lunchclaw bot"
+    (cd "$SCRIPT_DIR/sandbox-app" && npm install --silent && npm run build) 2>&1 | tail -1
+    ok
+
+    # --- Collect config ---
+    step "Configuration"
+
+    if [ -f "$SCRIPT_DIR/.env.local" ]; then
+        echo "    Found existing .env.local"
+        # shellcheck disable=SC1091
+        source "$SCRIPT_DIR/.env.local"
+    fi
+
+    if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+        echo ""
+        echo "    You need a Telegram bot token from @BotFather."
+        echo "    Open Telegram, message @BotFather, send /newbot, follow the prompts."
+        echo ""
+        read -rp "    Telegram bot token: " TELEGRAM_BOT_TOKEN
+    fi
+
+    if [ -z "${TELEGRAM_ALLOWED_USER_ID:-}" ]; then
+        echo ""
+        echo "    You need your Telegram user ID."
+        echo "    Message @userinfobot on Telegram to get it."
+        echo ""
+        read -rp "    Your Telegram user ID: " TELEGRAM_ALLOWED_USER_ID
+    fi
+
+    if [ -z "${DELIVERY_ADDRESS:-}" ]; then
+        echo ""
+        read -rp "    Delivery address: " DELIVERY_ADDRESS
+    fi
+
+    # Save for future runs
+    cat > "$SCRIPT_DIR/.env.local" << EOF
+TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+TELEGRAM_ALLOWED_USER_ID=${TELEGRAM_ALLOWED_USER_ID}
+DELIVERY_ADDRESS=${DELIVERY_ADDRESS}
+EOF
+    chmod 600 "$SCRIPT_DIR/.env.local"
+    echo "    Config saved to .env.local"
+    ok
+
+    # --- Create sandbox ---
+    step "Creating sandbox"
+
+    if openshell sandbox list 2>/dev/null | grep -q "$SANDBOX_NAME"; then
+        echo "    Sandbox '$SANDBOX_NAME' already exists."
+    else
+        openshell sandbox create --name "$SANDBOX_NAME" --from "$SCRIPT_DIR/Dockerfile"
+    fi
+    ensure_ssh_config
+    ok
+
+    # --- Apply policy ---
+    step "Applying network policy"
+    openshell policy set --policy "$SCRIPT_DIR/policies/network.yaml" --wait "$SANDBOX_NAME"
+    ok
+
+    # --- Upload code ---
+    step "Deploying hungry-cli"
+    openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$SCRIPT_DIR/../hungry-cli" /sandbox/hungry-cli
+    ok
+
+    step "Deploying lunchclaw bot"
+    openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$SCRIPT_DIR/sandbox-app" /sandbox/lunchclaw
+    ok
+
+    step "Uploading workspace files"
+    openshell sandbox upload "$SANDBOX_NAME" "$SCRIPT_DIR/workspace" /sandbox/.openclaw/workspace
+    ok
+
+    # --- Install deps in sandbox ---
+    step "Installing dependencies in sandbox"
+    ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && npm install --omit=dev 2>&1 | tail -1'
+    ssh "$SSH_HOST" 'cd /sandbox/lunchclaw && npm install --omit=dev 2>&1 | tail -1'
+    ok
+
+    # --- Install Playwright ---
+    step "Installing browser engine"
+    ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && node node_modules/playwright/cli.js install chromium 2>&1 | grep -E "downloaded|Failed" || true'
+    ok
+
+    # --- Set environment ---
+    step "Configuring environment"
+    ssh "$SSH_HOST" "cat > /sandbox/.env << EOF
+TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+TELEGRAM_ALLOWED_USER_ID=${TELEGRAM_ALLOWED_USER_ID}
+DELIVERY_ADDRESS=${DELIVERY_ADDRESS}
+HUNGRY_CLI_PATH=/sandbox/hungry-cli/dist/cli.js
+BUDGET_MAX=30
+EOF"
+    ok
+
+    # --- Auth ---
+    step "Delivery service authentication"
+    echo ""
+    echo "    You need to log into your delivery service once."
+    echo "    This opens a browser inside the sandbox."
+    echo ""
+    read -rp "    Press Enter to open the auth browser (or Ctrl-C to skip)..."
+    ssh -t "$SSH_HOST" 'node /sandbox/hungry-cli/dist/cli.js auth' || warn "Auth skipped — run './lunchclaw auth' later."
+    ok
+
+    # --- Start ---
+    cmd_start
+
+    echo ""
+    echo -e "${BOLD}  ===============${NC}"
+    echo -e "${BOLD}  LunchClaw is ready!${NC}"
+    echo ""
+    echo "  Message your bot on Telegram."
+    echo "  Try: \"hungry, something with chicken\""
+    echo ""
+    echo "  Commands:"
+    echo "    ./lunchclaw status    Check health"
+    echo "    ./lunchclaw logs      Stream logs"
+    echo "    ./lunchclaw stop      Stop the bot"
+    echo "    ./lunchclaw start     Start the bot"
+    echo "    ./lunchclaw update    Rebuild and redeploy"
+}
+
+# ---------------------------------------------------------------------------
+# start / stop / status / logs
+# ---------------------------------------------------------------------------
+cmd_start() {
+    step "Starting LunchClaw"
+    ensure_ssh_config
+    ssh "$SSH_HOST" 'pkill -f "node.*bot.js" 2>/dev/null || true'
+    sleep 1
+    ssh "$SSH_HOST" 'cd /sandbox/lunchclaw && nohup node dist/bot.js >> /sandbox/lunchclaw.log 2>&1 &'
+    sleep 2
+    if ssh "$SSH_HOST" 'pgrep -f "node.*bot.js" > /dev/null 2>&1'; then
+        ok
+        echo "    Bot is running."
+    else
+        fail "Bot failed to start. Run './lunchclaw logs' to debug."
+    fi
+}
+
+cmd_stop() {
+    step "Stopping LunchClaw"
+    ensure_ssh_config
+    ssh "$SSH_HOST" 'pkill -f "node.*bot.js" 2>/dev/null || true'
+    ok
+}
+
+cmd_status() {
+    ensure_ssh_config
+    echo -e "${BOLD}LunchClaw Status${NC}"
+    echo ""
+    if ssh "$SSH_HOST" 'pgrep -f "node.*bot.js" > /dev/null 2>&1'; then
+        echo -e "  Bot:     ${GREEN}running${NC}"
+    else
+        echo -e "  Bot:     ${RED}stopped${NC}"
+    fi
+    echo "  Sandbox: $SANDBOX_NAME"
+    echo ""
+    echo "  Last log lines:"
+    ssh "$SSH_HOST" 'tail -5 /sandbox/lunchclaw.log 2>/dev/null' || echo "  (no logs yet)"
+}
+
+cmd_logs() {
+    ensure_ssh_config
+    ssh "$SSH_HOST" 'tail -f /sandbox/lunchclaw.log'
+}
+
+cmd_update() {
+    step "Rebuilding"
+    (cd "$SCRIPT_DIR/../hungry-cli" && npm run build) 2>&1 | tail -1
+    (cd "$SCRIPT_DIR/sandbox-app" && npm run build) 2>&1 | tail -1
+    ok
+
+    step "Uploading"
+    ensure_ssh_config
+    openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$SCRIPT_DIR/../hungry-cli" /sandbox/hungry-cli
+    openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$SCRIPT_DIR/sandbox-app" /sandbox/lunchclaw
+    openshell sandbox upload "$SANDBOX_NAME" "$SCRIPT_DIR/workspace" /sandbox/.openclaw/workspace
+    ok
+
+    cmd_start
+}
+
+cmd_auth() {
+    ensure_ssh_config
+    ssh -t "$SSH_HOST" 'node /sandbox/hungry-cli/dist/cli.js auth'
+}
+
+cmd_destroy() {
+    echo -e "${RED}This will permanently delete the lunchclaw sandbox and all data.${NC}"
+    read -rp "Are you sure? (yes/no): " confirm
+    if [ "$confirm" = "yes" ]; then
+        openshell sandbox delete "$SANDBOX_NAME"
+        echo "Sandbox deleted."
+    else
+        echo "Cancelled."
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+case "${1:-help}" in
+    setup)   cmd_setup ;;
+    start)   cmd_start ;;
+    stop)    cmd_stop ;;
+    status)  cmd_status ;;
+    logs)    cmd_logs ;;
+    update)  cmd_update ;;
+    auth)    cmd_auth ;;
+    destroy) cmd_destroy ;;
+    help|--help|-h)
+        echo "Usage: ./lunchclaw <command>"
+        echo ""
+        echo "Commands:"
+        echo "  setup     Interactive first-time setup"
+        echo "  start     Start the bot"
+        echo "  stop      Stop the bot"
+        echo "  status    Check bot health"
+        echo "  logs      Stream bot logs"
+        echo "  update    Rebuild and redeploy code"
+        echo "  auth      Re-authenticate with delivery service"
+        echo "  destroy   Remove the sandbox (permanent)"
+        ;;
+    *)
+        echo "Unknown command: $1"
+        echo "Run './lunchclaw help' for usage."
+        exit 1
+        ;;
+esac
