@@ -1,0 +1,23 @@
+{
+  "name": "lunchclaw-sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "LunchClaw — healthy Uber Eats ordering agent (runs inside NemoClaw sandbox)",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/bot.js",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "telegraf": "^4.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.2",
+    "@vitest/coverage-v8": "^4.1.2"
+  }
+}
