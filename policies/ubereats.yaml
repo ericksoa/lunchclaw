@@ -1,0 +1,31 @@
+# Network policy addition for Uber Eats access.
+# Apply via: openshell policy set --add policies/ubereats.yaml
+
+version: 1
+
+network_policies:
+  ubereats:
+    name: ubereats
+    endpoints:
+      - host: www.ubereats.com
+        port: 443
+        access: full      # Playwright needs full access (WebSocket + HTTP)
+      - host: "*.ubereats.com"
+        port: 443
+        access: full
+      # Uber's CDN for menu images, restaurant logos
+      - host: "*.ubercdn.com"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+      # Uber's API backend (GraphQL for menu data, cart, checkout)
+      - host: "*.uber.com"
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/node }
+      # Playwright's bundled Chromium
+      - { path: /sandbox/.cache/ms-playwright/chromium-*/chrome-linux/chrome }
