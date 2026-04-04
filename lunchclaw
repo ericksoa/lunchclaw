@@ -164,11 +164,25 @@ EOF"
     step "Delivery service authentication"
     echo ""
     echo "    You need to log into your delivery service once."
-    echo "    This opens a browser inside the sandbox."
+    echo "    This opens a browser on YOUR machine (not inside the sandbox),"
+    echo "    then uploads the session to the sandbox."
     echo ""
-    read -rp "    Press Enter to open the auth browser (or Ctrl-C to skip)..."
-    ssh -t "$SSH_HOST" 'node /sandbox/hungry-cli/dist/cli.js auth' || warn "Auth skipped — run './lunchclaw auth' later."
-    ok
+
+    # Check if already authed locally
+    local auth_dir="$HOME/.config/hungry/ubereats"
+    if [ -d "$auth_dir/chrome-profile" ] && [ -f "$auth_dir/auth.json" ]; then
+        echo "    Found existing local session."
+        read -rp "    Use it? (Y/n): " use_existing
+        if [ "${use_existing:-y}" != "n" ] && [ "${use_existing:-y}" != "N" ]; then
+            echo "    Uploading session to sandbox..."
+            openshell sandbox upload "$SANDBOX_NAME" "$auth_dir" /sandbox/.config/hungry/ubereats
+            ok
+        else
+            cmd_auth_local
+        fi
+    else
+        cmd_auth_local
+    fi
 
     # --- Start ---
     cmd_start
@@ -249,9 +263,31 @@ cmd_update() {
     cmd_start
 }
 
+cmd_auth_local() {
+    # Run auth locally where Chrome can open a visible window,
+    # then upload the session to the sandbox.
+    local hungry_cli="$SCRIPT_DIR/../hungry-cli"
+
+    echo ""
+    echo "    Opening Chrome on your machine to log in..."
+    echo "    Log in, then press Enter in the terminal when done."
+    echo ""
+
+    (cd "$hungry_cli" && node dist/cli.js auth)
+
+    local auth_dir="$HOME/.config/hungry/ubereats"
+    if [ -d "$auth_dir/chrome-profile" ]; then
+        echo "    Uploading session to sandbox..."
+        ensure_ssh_config
+        openshell sandbox upload "$SANDBOX_NAME" "$auth_dir" /sandbox/.config/hungry/ubereats
+        ok
+    else
+        warn "Auth may not have completed. Run './lunchclaw auth' to retry."
+    fi
+}
+
 cmd_auth() {
-    ensure_ssh_config
-    ssh -t "$SSH_HOST" 'node /sandbox/hungry-cli/dist/cli.js auth'
+    cmd_auth_local
 }
 
 cmd_destroy() {
