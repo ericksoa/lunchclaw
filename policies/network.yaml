@@ -1,0 +1,65 @@
+# Network policy for LunchClaw sandbox.
+# Restricts outbound to only delivery service + Telegram.
+# Apply via: openshell policy set lunchclaw --add policies/network.yaml
+
+version: 1
+
+network_policies:
+  # Delivery service access — required for hungry-cli browser automation
+  delivery_service:
+    endpoints:
+      - host: www.ubereats.com
+        port: 443
+        access: full      # Playwright needs full access (WebSocket + HTTP)
+      - host: "*.ubereats.com"
+        port: 443
+        access: full
+      - host: "*.uber.com"
+        port: 443
+        access: full
+      - host: auth.uber.com
+        port: 443
+        access: full
+      # CDN for images (GET only)
+      - host: "*.ubercdn.com"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+      - { path: /sandbox/.cache/ms-playwright/chromium-*/chrome-linux/chrome }
+
+  # Telegram Bot API — required for LunchClaw bot
+  telegram:
+    endpoints:
+      - host: api.telegram.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/bot*/**" }
+          - allow: { method: GET, path: "/bot*/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+
+  # npm registry — required for package installation during setup
+  npm_registry:
+    endpoints:
+      - host: registry.npmjs.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/npm }
+      - { path: /usr/bin/npm }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
