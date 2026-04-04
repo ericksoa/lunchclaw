@@ -146,9 +146,14 @@ EOF
     ensure_ssh_config
     ok
 
-    # --- Apply LunchClaw network policy (adds delivery service access) ---
+    # --- Apply LunchClaw network policy (merge into NemoClaw's base) ---
     step "Applying LunchClaw network policy"
-    openshell policy set --policy "$SCRIPT_DIR/policies/network.yaml" --wait "$SANDBOX_NAME"
+    MERGED_POLICY=$(mktemp /tmp/lunchclaw-policy-XXXXXX.yaml)
+    openshell policy get --full "$SANDBOX_NAME" 2>&1 | sed '1,/^---$/d' > "$MERGED_POLICY"
+    # Append our delivery service + playwright network rules
+    sed -n '/^  delivery_service:/,$ p' "$SCRIPT_DIR/policies/network.yaml" >> "$MERGED_POLICY"
+    openshell policy set --policy "$MERGED_POLICY" --wait "$SANDBOX_NAME"
+    rm -f "$MERGED_POLICY"
     ok
 
     # --- Upload code ---

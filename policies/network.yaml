@@ -1,16 +1,20 @@
-# Network policy for LunchClaw sandbox.
-# Restricts outbound to only delivery service + Telegram.
-# Apply via: openshell policy set lunchclaw --add policies/network.yaml
+# LunchClaw network policy additions.
+# Layers delivery service + Playwright access on top of NemoClaw's base policy.
+# Apply via: openshell policy set --policy policies/network.yaml --wait lunchclaw
+#
+# NemoClaw's onboard already provides: npm, telegram, github, nvidia, openclaw.
+# This file adds only what LunchClaw needs on top of that.
 
 version: 1
 
 network_policies:
   # Delivery service access — required for hungry-cli browser automation
   delivery_service:
+    name: delivery_service
     endpoints:
       - host: www.ubereats.com
         port: 443
-        access: full      # Playwright needs full access (WebSocket + HTTP)
+        access: full
       - host: "*.ubereats.com"
         port: 443
         access: full
@@ -20,71 +24,33 @@ network_policies:
       - host: auth.uber.com
         port: 443
         access: full
-      # CDN for images (GET only)
       - host: "*.ubercdn.com"
         port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
+        access: full
     binaries:
-      - { path: /usr/local/bin/node }
-      - { path: /usr/bin/node }
-      - { path: /sandbox/.cache/ms-playwright/chromium-*/chrome-linux/chrome }
+      - path: /usr/local/bin/node
+      - path: /usr/bin/node
+      - path: /sandbox/.cache/ms-playwright/chromium-*/chrome-linux/chrome
 
-  # Telegram Bot API — required for LunchClaw bot
-  telegram:
-    endpoints:
-      - host: api.telegram.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: POST, path: "/bot*/**" }
-          - allow: { method: GET, path: "/bot*/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
-      - { path: /usr/bin/node }
-
-  # Playwright browser downloads — required during initial setup only.
-  # Uses full access (not TLS-terminated REST) because CDNs reject
-  # requests when TLS is terminated by the proxy.
-  # Can be removed from policy after chromium is installed.
+  # Playwright browser downloads — needed during initial setup
   playwright_setup:
+    name: playwright_setup
     endpoints:
-      - host: "cdn.playwright.dev"
+      - host: cdn.playwright.dev
         port: 443
         access: full
-      - host: "playwright.download.prss.microsoft.com"
+      - host: playwright.download.prss.microsoft.com
         port: 443
         access: full
-      - host: "playwright.azureedge.net"
+      - host: playwright.azureedge.net
         port: 443
         access: full
-      - host: "storage.googleapis.com"
+      - host: storage.googleapis.com
         port: 443
         access: full
-      - host: "edgedl.me.gvt1.com"
+      - host: edgedl.me.gvt1.com
         port: 443
         access: full
     binaries:
-      - { path: /usr/local/bin/node }
-      - { path: /usr/bin/node }
-
-  # npm registry — required for package installation during setup
-  npm_registry:
-    endpoints:
-      - host: registry.npmjs.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-    binaries:
-      - { path: /usr/local/bin/npm }
-      - { path: /usr/bin/npm }
-      - { path: /usr/local/bin/node }
-      - { path: /usr/bin/node }
+      - path: /usr/local/bin/node
+      - path: /usr/bin/node

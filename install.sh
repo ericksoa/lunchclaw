@@ -190,9 +190,64 @@ ok
 step "Applying LunchClaw network policy"
 echo "    Adding delivery service and Playwright download access..."
 
-# NemoClaw's onboard gives us telegram + npm.
-# We add the delivery service endpoints on top.
-openshell policy set --policy "$INSTALL_DIR/policies/network.yaml" --wait "$SANDBOX_NAME"
+# NemoClaw's onboard sets the base policy (filesystem, landlock, process, network).
+# Filesystem policy is locked after creation — we can only change network_policies.
+# Merge our additions into the existing policy by:
+# 1. Dumping current policy (includes filesystem/landlock/process + base network)
+# 2. Appending our delivery_service + playwright_setup network rules
+# 3. Setting the merged result
+MERGED_POLICY=$(mktemp /tmp/lunchclaw-policy-XXXXXX.yaml)
+openshell policy get --full "$SANDBOX_NAME" 2>&1 | sed '1,/^---$/d' > "$MERGED_POLICY"
+
+# Append our network_policies (just the rules, not version/filesystem)
+cat >> "$MERGED_POLICY" << 'POLICY'
+  delivery_service:
+    name: delivery_service
+    endpoints:
+    - host: www.ubereats.com
+      port: 443
+      access: full
+    - host: "*.ubereats.com"
+      port: 443
+      access: full
+    - host: "*.uber.com"
+      port: 443
+      access: full
+    - host: auth.uber.com
+      port: 443
+      access: full
+    - host: "*.ubercdn.com"
+      port: 443
+      access: full
+    binaries:
+    - path: /usr/local/bin/node
+    - path: /usr/bin/node
+    - path: /sandbox/.cache/ms-playwright/chromium-*/chrome-linux/chrome
+  playwright_setup:
+    name: playwright_setup
+    endpoints:
+    - host: cdn.playwright.dev
+      port: 443
+      access: full
+    - host: playwright.download.prss.microsoft.com
+      port: 443
+      access: full
+    - host: playwright.azureedge.net
+      port: 443
+      access: full
+    - host: storage.googleapis.com
+      port: 443
+      access: full
+    - host: edgedl.me.gvt1.com
+      port: 443
+      access: full
+    binaries:
+    - path: /usr/local/bin/node
+    - path: /usr/bin/node
+POLICY
+
+openshell policy set --policy "$MERGED_POLICY" --wait "$SANDBOX_NAME"
+rm -f "$MERGED_POLICY"
 ok
 
 # =========================================================================
