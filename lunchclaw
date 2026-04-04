@@ -80,23 +80,34 @@ cmd_setup() {
 
     if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
         echo ""
-        echo "    You need a Telegram bot token from @BotFather."
-        echo "    Open Telegram, message @BotFather, send /newbot, follow the prompts."
+        echo "    Step 1: Get a Telegram bot token"
         echo ""
-        read -rp "    Telegram bot token: " TELEGRAM_BOT_TOKEN
+        echo "    a) Install Telegram if you don't have it: https://telegram.org"
+        echo "    b) Open Telegram and search for @BotFather (or go to https://t.me/BotFather)"
+        echo "    c) Send /newbot to @BotFather"
+        echo "    d) Choose a name for your bot (e.g., 'My LunchClaw')"
+        echo "    e) Choose a username (must end in 'bot', e.g., 'mylunchclaw_bot')"
+        echo "    f) @BotFather will reply with a token like: 123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+        echo ""
+        read -rp "    Paste your bot token here: " TELEGRAM_BOT_TOKEN
     fi
 
     if [ -z "${TELEGRAM_ALLOWED_USER_ID:-}" ]; then
         echo ""
-        echo "    You need your Telegram user ID."
-        echo "    Message @userinfobot on Telegram to get it."
+        echo "    Step 2: Get your Telegram user ID"
         echo ""
-        read -rp "    Your Telegram user ID: " TELEGRAM_ALLOWED_USER_ID
+        echo "    a) In Telegram, search for @userinfobot (or go to https://t.me/userinfobot)"
+        echo "    b) Send any message to @userinfobot"
+        echo "    c) It will reply with your user ID (a number like 123456789)"
+        echo ""
+        read -rp "    Paste your user ID here: " TELEGRAM_ALLOWED_USER_ID
     fi
 
     if [ -z "${DELIVERY_ADDRESS:-}" ]; then
         echo ""
-        read -rp "    Delivery address: " DELIVERY_ADDRESS
+        echo "    Step 3: Delivery address"
+        echo ""
+        read -rp "    Enter your delivery address: " DELIVERY_ADDRESS
     fi
 
     # Save for future runs
