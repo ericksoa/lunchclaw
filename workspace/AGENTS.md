@@ -11,7 +11,7 @@ A food delivery CLI. Run commands via bash. Always use `--json` for structured o
 ### Search for restaurants
 
 ```bash
-node /sandbox/hungry-cli/dist/cli.js search "chicken bowl" --json
+HUNGRY_METRICS=1 node /sandbox/hungry-cli/dist/cli.js search "chicken bowl" --json
 ```
 
 Returns an array of restaurants with: restaurant, restaurantUrl, rating, eta, price (delivery fee level), description (deals/offers).
@@ -19,7 +19,7 @@ Returns an array of restaurants with: restaurant, restaurantUrl, rating, eta, pr
 ### Browse a restaurant menu
 
 ```bash
-node /sandbox/hungry-cli/dist/cli.js menu "<restaurantUrl>" --json
+HUNGRY_METRICS=1 node /sandbox/hungry-cli/dist/cli.js menu "<restaurantUrl>" --json
 ```
 
 Returns array of menu items with: itemName, price, description, category.
@@ -29,7 +29,7 @@ Use the `restaurantUrl` from search results.
 ### Add item to cart
 
 ```bash
-node /sandbox/hungry-cli/dist/cli.js cart add "<restaurantUrl>" "<itemName>"
+HUNGRY_METRICS=1 node /sandbox/hungry-cli/dist/cli.js cart add "<restaurantUrl>" "<itemName>"
 ```
 
 Opens a browser to add the item. Use exact item names from the menu.
@@ -37,19 +37,19 @@ Opens a browser to add the item. Use exact item names from the menu.
 ### View cart
 
 ```bash
-node /sandbox/hungry-cli/dist/cli.js cart view --json
+HUNGRY_METRICS=1 node /sandbox/hungry-cli/dist/cli.js cart view --json
 ```
 
 ### Clear cart
 
 ```bash
-node /sandbox/hungry-cli/dist/cli.js cart clear
+HUNGRY_METRICS=1 node /sandbox/hungry-cli/dist/cli.js cart clear
 ```
 
 ### Preview order (DO NOT place yet)
 
 ```bash
-node /sandbox/hungry-cli/dist/cli.js order --json
+HUNGRY_METRICS=1 node /sandbox/hungry-cli/dist/cli.js order --json
 ```
 
 Shows total and ETA without placing. ALWAYS preview before placing.
@@ -57,7 +57,7 @@ Shows total and ETA without placing. ALWAYS preview before placing.
 ### Place order (ONLY after user confirms)
 
 ```bash
-node /sandbox/hungry-cli/dist/cli.js order --confirm --json
+HUNGRY_METRICS=1 node /sandbox/hungry-cli/dist/cli.js order --confirm --json
 ```
 
 ONLY run this after the user has explicitly said yes.
@@ -65,7 +65,7 @@ ONLY run this after the user has explicitly said yes.
 ### Check auth status
 
 ```bash
-node /sandbox/hungry-cli/dist/cli.js auth --check
+HUNGRY_METRICS=1 node /sandbox/hungry-cli/dist/cli.js auth --check
 ```
 
 If expired, tell the user to re-authenticate.
