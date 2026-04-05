@@ -239,14 +239,22 @@ step "Deploying to sandbox"
 openshell sandbox ssh-config "$SANDBOX_NAME" >> ~/.ssh/config 2>/dev/null || true
 SSH_HOST="openshell-${SANDBOX_NAME}"
 
-# Wait for sandbox to be fully ready after policy change
-for i in $(seq 1 12); do
-    if ssh "$SSH_HOST" 'echo ok' 2>/dev/null; then break; fi
+# Wait for sandbox to be stable after policy change (can take 2+ minutes)
+echo "    Waiting for sandbox to stabilize after policy change..."
+for i in $(seq 1 30); do
+    if ssh "$SSH_HOST" 'echo ok' 2>/dev/null; then
+        # Wait a few more seconds to make sure it stays ready
+        sleep 5
+        if ssh "$SSH_HOST" 'echo ok' 2>/dev/null; then break; fi
+    fi
     sleep 5
 done
 
+echo "    Uploading hungry-cli..."
 openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$INSTALL_DIR/../hungry-cli" /sandbox/hungry-cli 2>&1 | tail -1
+echo "    Uploading workspace files..."
 openshell sandbox upload "$SANDBOX_NAME" "$INSTALL_DIR/workspace" /sandbox/.openclaw/workspace 2>&1 | tail -1
+echo "    Installing dependencies..."
 ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && npm install --omit=dev 2>&1 | tail -1'
 ok
 
