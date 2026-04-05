@@ -247,15 +247,13 @@ openshell sandbox ssh-config "$SANDBOX_NAME" >> ~/.ssh/config 2>/dev/null
 
 SSH_HOST="openshell-${SANDBOX_NAME}"
 
-# Wait for sandbox to be ready (policy presets during onboard trigger reprovisioning)
-echo "    Waiting for sandbox to be ready (this may take a couple minutes)..."
-sleep 60
-for i in $(seq 1 36); do
-    if ssh "$SSH_HOST" 'echo ok' >/dev/null 2>&1; then
+# Wait for sandbox to be ready
+echo "    Waiting for sandbox..."
+for i in $(seq 1 24); do
+    if ssh -n "$SSH_HOST" 'echo ok' >/dev/null 2>&1; then
         echo "    Sandbox is ready."
         break
     fi
-    echo "    Still waiting... ($((i*5+60))s)"
     sleep 5
 done
 
@@ -264,7 +262,7 @@ openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$INSTALL_DIR/../hungry
 echo "    Uploading workspace files..."
 openshell sandbox upload "$SANDBOX_NAME" "$INSTALL_DIR/workspace" /sandbox/.openclaw/workspace 2>&1
 echo "    Installing dependencies..."
-ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && npm install --omit=dev 2>&1'
+ssh -n "$SSH_HOST" 'cd /sandbox/hungry-cli && npm install --omit=dev 2>&1'
 
 ok
 
@@ -273,7 +271,7 @@ ok
 # =========================================================================
 step "Installing browser engine in sandbox"
 set +e
-ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && node node_modules/playwright/cli.js install chromium 2>&1'
+ssh -n "$SSH_HOST" 'cd /sandbox/hungry-cli && node node_modules/playwright/cli.js install chromium 2>&1'
 set -e
 ok
 
