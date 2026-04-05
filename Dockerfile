@@ -1,31 +1,28 @@
 # LunchClaw sandbox image.
 #
-# Matches NemoClaw's pinned dependencies (Dockerfile.base from NVIDIA/NemoClaw)
-# plus Playwright system libraries for browser automation.
+# Extends NemoClaw's sandbox base with Playwright system dependencies.
+# NemoClaw onboard will layer its own entrypoint + plugin on top.
 #
-# Build via: openshell sandbox create --name lunchclaw --from .
+# Usage: Set NEMOCLAW_BASE_IMAGE before onboard, or use directly with openshell.
 
-# Same base image NemoClaw uses
-FROM node:22-slim
-
-# Install OpenClaw CLI — pinned to the version NemoClaw is tested against
-# See: https://github.com/NVIDIA/NemoClaw/blob/main/Dockerfile.base
-RUN npm install -g openclaw@2026.3.11
+FROM ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 
 # Install Playwright's Chromium system dependencies.
-# The OpenShell sandbox security model prevents installing packages at
-# runtime (no root access), so they must be baked into the image.
+# Do NOT switch USER — NemoClaw's Dockerfile layers on top and expects root.
+USER root
+
+# Debian Bookworm package names for Playwright Chromium deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libglib2.0-0t64 \
+    libglib2.0-0 \
     libnspr4 \
     libnss3 \
-    libatk1.0-0t64 \
-    libatk-bridge2.0-0t64 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
     libdbus-1-3 \
-    libcups2t64 \
+    libcups2 \
     libxcb1 \
     libxkbcommon0 \
-    libasound2t64 \
+    libasound2 \
     libgbm1 \
     libx11-6 \
     libxext6 \
@@ -35,5 +32,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxdamage1 \
     libxfixes3 \
     libxrandr2 \
-    libatspi2.0-0t64 \
+    libatspi2.0-0 \
     && rm -rf /var/lib/apt/lists/*
