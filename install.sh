@@ -154,13 +154,63 @@ ok
 # =========================================================================
 step "Creating NemoClaw sandbox"
 
+# Add custom policy presets for delivery service + Playwright CDN
+# These go into NemoClaw's blueprint directory so they're applied during
+# sandbox creation — not after, which avoids reprovisioning.
+PRESET_DIR="$HOME/.nemoclaw/source/nemoclaw-blueprint/policies/presets"
+if [ -d "$PRESET_DIR" ]; then
+    cat > "$PRESET_DIR/delivery-service.yaml" << 'PRESET'
+preset:
+  name: delivery-service
+  description: "Food delivery service access for hungry-cli"
+network_policies:
+  delivery_service:
+    name: delivery_service
+    endpoints:
+      - host: www.ubereats.com
+        port: 443
+        access: full
+      - host: "*.ubereats.com"
+        port: 443
+        access: full
+      - host: "*.uber.com"
+        port: 443
+        access: full
+      - host: "*.ubercdn.com"
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /sandbox/.cache/ms-playwright/chromium-*/chrome-linux/chrome }
+PRESET
+
+    cat > "$PRESET_DIR/playwright-cdn.yaml" << 'PRESET'
+preset:
+  name: playwright-cdn
+  description: "Playwright browser engine download access"
+network_policies:
+  playwright_cdn:
+    name: playwright_cdn
+    endpoints:
+      - host: cdn.playwright.dev
+        port: 443
+        access: full
+      - host: playwright.download.prss.microsoft.com
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/node }
+PRESET
+    echo "    Custom policy presets installed."
+fi
+
 echo "    Running nemoclaw onboard..."
 NEMOCLAW_NON_INTERACTIVE=1 \
 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
 NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
 NEMOCLAW_RECREATE_SANDBOX=1 \
 NEMOCLAW_PROVIDER=cloud \
-NEMOCLAW_POLICY_PRESETS="npm,telegram" \
+NEMOCLAW_POLICY_PRESETS="npm,telegram,delivery-service,playwright-cdn" \
 TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
 nemoclaw onboard 2>&1
 ok
@@ -181,57 +231,8 @@ print('    Default sandbox: $SANDBOX_NAME')
 "
 ok
 
-# =========================================================================
-# Step 8: Merge network policy (add delivery service + Playwright CDN)
-# =========================================================================
-step "Adding delivery service network policy"
-
-# Wait for sandbox to be ready
-for i in $(seq 1 12); do
-    phase=$(openshell sandbox list 2>&1 | grep "$SANDBOX_NAME" | awk '{print $NF}')
-    if echo "$phase" | grep -qi "ready"; then break; fi
-    sleep 5
-done
-
-# Get current policy, merge our additions (preserves filesystem/landlock/process)
-openshell policy get --full "$SANDBOX_NAME" 2>&1 | sed '1,/^---$/d' > /tmp/lc-current-policy.yaml
-
-python3 << 'PY'
-import yaml
-with open("/tmp/lc-current-policy.yaml") as f:
-    policy = yaml.safe_load(f)
-np = policy.setdefault("network_policies", {})
-np["playwright_cdn"] = {
-    "name": "playwright_cdn",
-    "endpoints": [
-        {"host": "cdn.playwright.dev", "port": 443, "access": "full"},
-        {"host": "playwright.download.prss.microsoft.com", "port": 443, "access": "full"},
-    ],
-    "binaries": [{"path": "/usr/local/bin/node"}],
-}
-np["delivery_service"] = {
-    "name": "delivery_service",
-    "endpoints": [
-        {"host": "www.ubereats.com", "port": 443, "access": "full"},
-        {"host": "*.ubereats.com", "port": 443, "access": "full"},
-        {"host": "*.uber.com", "port": 443, "access": "full"},
-        {"host": "*.ubercdn.com", "port": 443, "access": "full"},
-    ],
-    "binaries": [
-        {"path": "/usr/local/bin/node"},
-        {"path": "/sandbox/.cache/ms-playwright/chromium-*/chrome-linux/chrome"},
-    ],
-}
-with open("/tmp/lc-merged-policy.yaml", "w") as f:
-    yaml.dump(policy, f, default_flow_style=False)
-PY
-
-openshell policy set --policy /tmp/lc-merged-policy.yaml --wait "$SANDBOX_NAME" 2>&1 | tail -2
-rm -f /tmp/lc-current-policy.yaml /tmp/lc-merged-policy.yaml
-ok
-
-# From here on, disable strict error mode — sandbox may be reprovisioning
-# and transient failures are expected during the stabilization period.
+# No post-onboard policy change needed — custom presets were applied during onboard.
+# This avoids sandbox reprovisioning which caused instability.
 set +eo pipefail
 
 # =========================================================================
@@ -244,22 +245,12 @@ openshell sandbox ssh-config "$SANDBOX_NAME" >> ~/.ssh/config 2>/dev/null
 
 SSH_HOST="openshell-${SANDBOX_NAME}"
 
-# Wait for sandbox to fully stabilize after policy change (takes 2+ minutes)
-echo "    Waiting for sandbox to stabilize after policy change (this takes ~2 min)..."
-sleep 30
-SANDBOX_READY=false
+# Wait for sandbox to be ready
+echo "    Waiting for sandbox..."
 for i in $(seq 1 24); do
-    if ssh "$SSH_HOST" 'echo ok' >/dev/null 2>&1; then
-        SANDBOX_READY=true
-        break
-    fi
-    echo "    Still waiting... ($((i*5+30))s)"
+    if ssh "$SSH_HOST" 'echo ok' >/dev/null 2>&1; then break; fi
     sleep 5
 done
-
-if [ "$SANDBOX_READY" != "true" ]; then
-    fail "Sandbox did not become ready after policy change. Try running the installer again."
-fi
 
 echo "    Uploading hungry-cli..."
 openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$INSTALL_DIR/../hungry-cli" /sandbox/hungry-cli 2>&1
