@@ -66,3 +66,22 @@ User (Telegram) -> bot.ts (state machine) -> hungry-cli (Playwright) -> Uber Eat
 - TypeScript, vitest for tests
 - Bot runs inside NemoClaw sandbox at `/sandbox/lunchclaw/`
 - Workspace files upload to `/sandbox/.openclaw/workspace/`
+
+## Known Issue: Sandbox Crash Loop
+
+**Root cause:** Colima VM has only 2 CPUs / 2GB RAM. Running k3s + OpenShell + OpenClaw + Chromium exceeds VM resources, causing the k3s node to go NotReady. The DNS proxy dies with the node restart and never recovers.
+
+**Evidence:**
+- `kubectl get events`: `NodeNotReady` followed by `TaintManagerEviction`
+- `kubectl top node`: 51% memory at idle (1GB of 2GB)
+- `colima list`: 2 CPUs, 2GiB memory
+- Metrics show Chromium uses ~300MB during search
+- Pod has no resource limits (`resources: {}`) — it's the node, not the pod
+
+**Fix:** Increase Colima VM resources:
+```bash
+colima stop
+colima start --cpu 4 --memory 8
+```
+
+Then rebuild the sandbox.
