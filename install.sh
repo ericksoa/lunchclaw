@@ -233,7 +233,8 @@ ok
 
 # No post-onboard policy change needed — custom presets were applied during onboard.
 # This avoids sandbox reprovisioning which caused instability.
-set +eo pipefail
+set +e
+set +o pipefail
 
 # =========================================================================
 # Step 9: Upload code to sandbox
