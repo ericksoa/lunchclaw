@@ -108,15 +108,19 @@ ok
 # =========================================================================
 step "Getting source code"
 
-if [ -d "$INSTALL_DIR" ]; then
+if [ -d "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then
     cd "$INSTALL_DIR"
-    git pull --quiet 2>/dev/null || true
+    git fetch --quiet origin 2>/dev/null
+    git reset --hard origin/main --quiet 2>/dev/null
 else
+    rm -rf "$INSTALL_DIR" 2>/dev/null
     git clone --quiet https://github.com/ericksoa/lunchclaw.git "$INSTALL_DIR"
     cd "$INSTALL_DIR"
 fi
 
-if [ ! -d "$INSTALL_DIR/../hungry-cli" ]; then
+if [ -d "$INSTALL_DIR/../hungry-cli" ] && [ -d "$INSTALL_DIR/../hungry-cli/.git" ]; then
+    (cd "$INSTALL_DIR/../hungry-cli" && git fetch --quiet origin 2>/dev/null && git reset --hard origin/main --quiet 2>/dev/null)
+else
     git clone --quiet https://github.com/ericksoa/hungry-cli.git "$INSTALL_DIR/../hungry-cli"
 fi
 
