@@ -241,7 +241,8 @@ set +o pipefail
 # =========================================================================
 step "Deploying to sandbox"
 
-# Add SSH config if needed
+# Clean old SSH config entries then add fresh one
+sed -i '' "/Host openshell-${SANDBOX_NAME}/,/^$/d" ~/.ssh/config 2>/dev/null
 openshell sandbox ssh-config "$SANDBOX_NAME" >> ~/.ssh/config 2>/dev/null
 
 SSH_HOST="openshell-${SANDBOX_NAME}"
@@ -260,8 +261,6 @@ openshell sandbox upload "$SANDBOX_NAME" "$INSTALL_DIR/workspace" /sandbox/.open
 echo "    Installing dependencies..."
 ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && npm install --omit=dev 2>&1'
 
-# Re-enable strict mode
-set -e
 ok
 
 # =========================================================================
