@@ -230,26 +230,36 @@ openshell policy set --policy /tmp/lc-merged-policy.yaml --wait "$SANDBOX_NAME" 
 rm -f /tmp/lc-current-policy.yaml /tmp/lc-merged-policy.yaml
 ok
 
+# From here on, disable strict error mode — sandbox may be reprovisioning
+# and transient failures are expected during the stabilization period.
+set +eo pipefail
+
 # =========================================================================
 # Step 9: Upload code to sandbox
 # =========================================================================
 step "Deploying to sandbox"
 
 # Add SSH config if needed
-openshell sandbox ssh-config "$SANDBOX_NAME" >> ~/.ssh/config 2>/dev/null || true
+openshell sandbox ssh-config "$SANDBOX_NAME" >> ~/.ssh/config 2>/dev/null
+
 SSH_HOST="openshell-${SANDBOX_NAME}"
 
 # Wait for sandbox to fully stabilize after policy change (takes 2+ minutes)
 echo "    Waiting for sandbox to stabilize after policy change (this takes ~2 min)..."
 sleep 30
+SANDBOX_READY=false
 for i in $(seq 1 24); do
-    if ssh "$SSH_HOST" 'echo ok' >/dev/null 2>&1; then break; fi
+    if ssh "$SSH_HOST" 'echo ok' >/dev/null 2>&1; then
+        SANDBOX_READY=true
+        break
+    fi
     echo "    Still waiting... ($((i*5+30))s)"
     sleep 5
 done
 
-# Disable strict mode for deploy steps — handle errors explicitly
-set +e
+if [ "$SANDBOX_READY" != "true" ]; then
+    fail "Sandbox did not become ready after policy change. Try running the installer again."
+fi
 
 echo "    Uploading hungry-cli..."
 openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$INSTALL_DIR/../hungry-cli" /sandbox/hungry-cli 2>&1
