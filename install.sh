@@ -154,18 +154,15 @@ ok
 # =========================================================================
 step "Creating NemoClaw sandbox"
 
-if nemoclaw list 2>/dev/null | awk '{print $1}' | grep -qx "$SANDBOX_NAME"; then
-    echo "    Sandbox '$SANDBOX_NAME' already exists."
-else
-    echo "    Running nemoclaw onboard..."
-    NEMOCLAW_NON_INTERACTIVE=1 \
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-    NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
-    NEMOCLAW_PROVIDER=cloud \
-    NEMOCLAW_POLICY_PRESETS="npm,telegram" \
-    TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
-    nemoclaw onboard 2>&1
-fi
+echo "    Running nemoclaw onboard..."
+NEMOCLAW_NON_INTERACTIVE=1 \
+NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
+NEMOCLAW_RECREATE_SANDBOX=1 \
+NEMOCLAW_PROVIDER=cloud \
+NEMOCLAW_POLICY_PRESETS="npm,telegram" \
+TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+nemoclaw onboard 2>&1
 ok
 
 # =========================================================================
