@@ -1,7 +1,13 @@
 // LunchClaw Telegram bot — runs inside a NemoClaw sandbox.
 // Uses hungry-cli as the backend for food delivery automation.
 
-import "dotenv/config";
+import dotenv from "dotenv";
+import { resolve } from "path";
+// Note: https-proxy-agent not needed — Node 22 undici handles HTTPS_PROXY natively
+
+// Load .env from /sandbox/.env (NemoClaw sandbox root) or local .env
+dotenv.config({ path: resolve("/sandbox/.env") });
+dotenv.config(); // fallback to cwd/.env for local dev
 import { Telegraf } from "telegraf";
 import { extractKeywords } from "./keywords.js";
 import { hungrySearch, hungryCartAdd, hungryCartClear, hungryOrder, hungryAuthCheck, type SearchResult } from "./hungry.js";
@@ -26,13 +32,15 @@ function log(level: "info" | "warn" | "error", msg: string, data?: Record<string
 // Config
 // ---------------------------------------------------------------------------
 
-const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+// LUNCHCLAW_BOT_TOKEN avoids NemoClaw's credential interception of TELEGRAM_BOT_TOKEN.
+// Falls back to TELEGRAM_BOT_TOKEN for local dev outside a sandbox.
+const TELEGRAM_TOKEN = process.env.LUNCHCLAW_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
 const ALLOWED_USER = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
 const DELIVERY_ADDRESS = process.env.DELIVERY_ADDRESS || "your address";
 const BUDGET_MAX = Number(process.env.BUDGET_MAX || "30");
 
 if (!TELEGRAM_TOKEN) {
-  log("error", "TELEGRAM_BOT_TOKEN is required. Set it in /sandbox/.env");
+  log("error", "LUNCHCLAW_BOT_TOKEN is required. Set it in /sandbox/.env");
   process.exit(1);
 }
 if (!ALLOWED_USER) {
@@ -126,7 +134,22 @@ function formatOptions(options: FoodOption[]): string {
 // Bot setup
 // ---------------------------------------------------------------------------
 
-const bot = new Telegraf(TELEGRAM_TOKEN);
+// In a NemoClaw sandbox, HTTPS_PROXY routes outbound traffic through OpenShell's proxy.
+// Telegraf uses node-fetch which doesn't auto-respect HTTPS_PROXY.
+// We pass the proxy agent only when running inside a sandbox.
+const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy;
+let telegrafOptions = {};
+if (proxyUrl) {
+  // Dynamic import to avoid hard dependency outside sandbox
+  try {
+    const { HttpsProxyAgent } = await import("https-proxy-agent");
+    telegrafOptions = { telegram: { agent: new HttpsProxyAgent(proxyUrl) as any } };
+    log("info", "Using proxy for Telegram", { proxy: proxyUrl });
+  } catch {
+    log("warn", "https-proxy-agent not available, trying direct connection");
+  }
+}
+const bot = new Telegraf(TELEGRAM_TOKEN, telegrafOptions);
 
 // Only respond to the owner
 bot.use((ctx, next) => {

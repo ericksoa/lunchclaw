@@ -288,8 +288,11 @@ ok
 # Step 9: Configure sandbox environment
 # =========================================================================
 step "Configuring sandbox environment"
+# NemoClaw intercepts TELEGRAM_BOT_TOKEN and replaces it with a proxy
+# placeholder. Use LUNCHCLAW_BOT_TOKEN so our bot gets the real token,
+# while NemoClaw's proxy still handles credential injection for its bridge.
 ssh "$SSH_HOST" "cat > /sandbox/.env << EOF
-TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+LUNCHCLAW_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_ALLOWED_USER_ID=${TELEGRAM_ALLOWED_USER_ID}
 DELIVERY_ADDRESS=${DELIVERY_ADDRESS}
 HUNGRY_CLI_PATH=/sandbox/hungry-cli/dist/cli.js
