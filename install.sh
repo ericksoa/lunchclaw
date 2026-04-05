@@ -164,7 +164,7 @@ else
     NEMOCLAW_PROVIDER=cloud \
     NEMOCLAW_POLICY_PRESETS="npm,telegram" \
     TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
-    nemoclaw onboard 2>&1 | grep -E "✓|✗|Error|Created|ready|preset" | head -15
+    nemoclaw onboard 2>&1
 fi
 ok
 
