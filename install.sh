@@ -247,10 +247,15 @@ openshell sandbox ssh-config "$SANDBOX_NAME" >> ~/.ssh/config 2>/dev/null
 
 SSH_HOST="openshell-${SANDBOX_NAME}"
 
-# Wait for sandbox to be ready
-echo "    Waiting for sandbox..."
-for i in $(seq 1 24); do
-    if ssh "$SSH_HOST" 'echo ok' >/dev/null 2>&1; then break; fi
+# Wait for sandbox to be ready (policy presets during onboard trigger reprovisioning)
+echo "    Waiting for sandbox to be ready (this may take a couple minutes)..."
+sleep 60
+for i in $(seq 1 36); do
+    if ssh "$SSH_HOST" 'echo ok' >/dev/null 2>&1; then
+        echo "    Sandbox is ready."
+        break
+    fi
+    echo "    Still waiting... ($((i*5+60))s)"
     sleep 5
 done
 
