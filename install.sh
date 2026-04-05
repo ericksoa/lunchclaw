@@ -251,18 +251,18 @@ for i in $(seq 1 30); do
 done
 
 echo "    Uploading hungry-cli..."
-openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$INSTALL_DIR/../hungry-cli" /sandbox/hungry-cli 2>&1 | tail -1
+openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$INSTALL_DIR/../hungry-cli" /sandbox/hungry-cli 2>&1 || fail "Failed to upload hungry-cli"
 echo "    Uploading workspace files..."
-openshell sandbox upload "$SANDBOX_NAME" "$INSTALL_DIR/workspace" /sandbox/.openclaw/workspace 2>&1 | tail -1
+openshell sandbox upload "$SANDBOX_NAME" "$INSTALL_DIR/workspace" /sandbox/.openclaw/workspace 2>&1 || fail "Failed to upload workspace"
 echo "    Installing dependencies..."
-ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && npm install --omit=dev 2>&1 | tail -1'
+ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && npm install --omit=dev 2>&1' || fail "Failed to install deps in sandbox"
 ok
 
 # =========================================================================
 # Step 10: Install Chromium in sandbox
 # =========================================================================
 step "Installing browser engine in sandbox"
-ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && node node_modules/playwright/cli.js install chromium 2>&1 | grep -E "downloaded|100%"' 2>&1 || warn "Chromium install may have failed"
+ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && node node_modules/playwright/cli.js install chromium 2>&1' || warn "Chromium install may have failed"
 ok
 
 # =========================================================================
