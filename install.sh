@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# LunchClaw installer — run with: curl -fsSL https://raw.githubusercontent.com/ericksoa/lunchclaw/main/install.sh | bash
+# LunchClaw installer
+# Run: curl -fsSL https://raw.githubusercontent.com/ericksoa/lunchclaw/main/install.sh | bash
 #
-# 1. Collects LunchClaw-specific config (Telegram, address)
-# 2. Installs NemoClaw if needed
-# 3. Runs nemoclaw onboard non-interactively with our defaults
-# 4. Deploys LunchClaw code into the sandbox
-# 5. Starts the bot
+# What this does:
+#   1. Collects Telegram token, user ID, delivery address
+#   2. Installs NemoClaw v0.0.6+ if needed
+#   3. Runs nemoclaw onboard (creates gateway + sandbox)
+#   4. Builds custom base image with Playwright system libs
+#   5. Merges delivery service + Playwright CDN into network policy
+#   6. Uploads hungry-cli + workspace + auth session to sandbox
+#   7. Installs Chromium inside sandbox
+#   8. Sets lunchclaw as default sandbox
+#   9. Starts the Telegram bridge
 
 set -euo pipefail
 
@@ -36,19 +42,14 @@ echo "  Powered by:"
 echo "    NVIDIA NemoClaw  https://github.com/NVIDIA/NemoClaw"
 echo "    NVIDIA OpenShell https://github.com/NVIDIA/OpenShell"
 echo ""
-echo "  LunchClaw uses NemoClaw to create a secure, network-isolated"
-echo "  sandbox for ordering food through Telegram."
-echo ""
 
 # =========================================================================
-# Step 1: Collect LunchClaw-specific config
+# Step 1: Collect config
 # =========================================================================
 step "LunchClaw configuration"
 
-# Load existing config if re-running
 if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/.env.local" ]; then
     echo "    Found existing config at $INSTALL_DIR/.env.local"
-    # shellcheck disable=SC1091
     source "$INSTALL_DIR/.env.local"
 fi
 
@@ -83,60 +84,43 @@ if [ -z "${DELIVERY_ADDRESS:-}" ]; then
     echo ""
     read -rp "    Enter your delivery address: " DELIVERY_ADDRESS
 fi
-
 ok
 
 # =========================================================================
-# Step 2: Check / install prerequisites
+# Step 2: Prerequisites
 # =========================================================================
 step "Checking prerequisites"
 
 command -v git >/dev/null 2>&1 || fail "git not found. Install: https://git-scm.com/"
 command -v docker >/dev/null 2>&1 || fail "Docker not found. Install: https://docs.docker.com/get-docker/"
 
-# Install NemoClaw if not present (brings Node.js + OpenShell)
 if ! command -v nemoclaw >/dev/null 2>&1; then
-    echo ""
     echo -e "    ${YELLOW}NemoClaw not found. Installing...${NC}"
-    echo "    This will install NemoClaw, OpenShell, and Node.js if needed."
-    echo "    See: https://github.com/NVIDIA/NemoClaw"
-    echo ""
-
-    # NemoClaw's own installer handles Node.js, OpenShell, etc.
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
-
-    # Reload PATH
-    # shellcheck disable=SC1090
     source ~/.bashrc 2>/dev/null || source ~/.zshrc 2>/dev/null || true
-
-    command -v nemoclaw >/dev/null 2>&1 || fail "NemoClaw installed but not found in PATH. Open a new terminal and re-run."
+    command -v nemoclaw >/dev/null 2>&1 || fail "NemoClaw installed but not in PATH. Open a new terminal and re-run."
 fi
-
 echo "    NemoClaw: $(nemoclaw --version 2>&1)"
-echo "    OpenShell: $(openshell --version 2>&1)"
 ok
 
 # =========================================================================
 # Step 3: Clone repos
 # =========================================================================
-step "Getting LunchClaw source"
+step "Getting source code"
 
 if [ -d "$INSTALL_DIR" ]; then
-    echo "    Found existing install at $INSTALL_DIR"
     cd "$INSTALL_DIR"
     git pull --quiet 2>/dev/null || true
 else
-    echo "    Cloning lunchclaw..."
     git clone --quiet https://github.com/ericksoa/lunchclaw.git "$INSTALL_DIR"
     cd "$INSTALL_DIR"
 fi
 
 if [ ! -d "$INSTALL_DIR/../hungry-cli" ]; then
-    echo "    Cloning hungry-cli..."
     git clone --quiet https://github.com/ericksoa/hungry-cli.git "$INSTALL_DIR/../hungry-cli"
 fi
 
-# Save config
+# Save config (quoted values for addresses with spaces)
 cat > "$INSTALL_DIR/.env.local" << EOF
 TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN}"
 TELEGRAM_ALLOWED_USER_ID="${TELEGRAM_ALLOWED_USER_ID}"
@@ -152,200 +136,181 @@ step "Building hungry-cli"
 (cd "$INSTALL_DIR/../hungry-cli" && npm install --silent 2>&1 && npm run build 2>&1) | tail -1
 ok
 
-step "Building lunchclaw bot"
-(cd "$INSTALL_DIR/sandbox-app" && npm install --silent 2>&1 && npm run build 2>&1) | tail -1
+# =========================================================================
+# Step 5: Build custom base image with Playwright libs
+# =========================================================================
+step "Building sandbox base image"
+echo "    Adding Playwright system libraries to NemoClaw base image..."
+docker build -t lunchclaw-base:latest -f "$INSTALL_DIR/Dockerfile" "$INSTALL_DIR" 2>&1 | tail -1
+docker tag lunchclaw-base:latest ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 ok
 
 # =========================================================================
-# Step 5: NemoClaw onboard — create the secure sandbox
+# Step 6: NemoClaw onboard
 # =========================================================================
 step "Creating NemoClaw sandbox"
 
 if nemoclaw list 2>/dev/null | awk '{print $1}' | grep -qx "$SANDBOX_NAME"; then
     echo "    Sandbox '$SANDBOX_NAME' already exists."
 else
-    echo "    Running nemoclaw onboard with LunchClaw defaults..."
-    echo "    This creates a secure OpenShell sandbox with network isolation."
-    echo ""
-
-    # Drive NemoClaw non-interactively with our defaults:
-    # - Sandbox name: lunchclaw
-    # - Provider: cloud (NVIDIA API)
-    # - Telegram token: auto-enables Telegram policy
-    # - Policy presets: npm (for package install), telegram
-    export NEMOCLAW_NON_INTERACTIVE=1
-    export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
-    export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
-    export NEMOCLAW_PROVIDER="${NEMOCLAW_PROVIDER:-cloud}"
-    export NEMOCLAW_POLICY_PRESETS="npm,telegram"
-    export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
-
-    nemoclaw onboard
+    echo "    Running nemoclaw onboard..."
+    NEMOCLAW_NON_INTERACTIVE=1 \
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+    NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
+    NEMOCLAW_PROVIDER=cloud \
+    NEMOCLAW_POLICY_PRESETS="npm,telegram" \
+    TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+    nemoclaw onboard 2>&1 | grep -E "✓|✗|Error|Created|ready|preset" | head -15
 fi
 ok
 
 # =========================================================================
-# Step 6: Apply LunchClaw network policy (adds delivery service access)
+# Step 7: Set lunchclaw as default sandbox
 # =========================================================================
-step "Applying LunchClaw network policy"
-echo "    Adding delivery service and Playwright download access..."
-
-# NemoClaw's onboard sets the base policy (filesystem, landlock, process, network).
-# Filesystem policy is locked after creation — we can only change network_policies.
-# Merge our additions into the existing policy by:
-# 1. Dumping current policy (includes filesystem/landlock/process + base network)
-# 2. Appending our delivery_service + playwright_setup network rules
-# 3. Setting the merged result
-MERGED_POLICY=$(mktemp /tmp/lunchclaw-policy-XXXXXX.yaml)
-openshell policy get --full "$SANDBOX_NAME" 2>&1 | sed '1,/^---$/d' > "$MERGED_POLICY"
-
-# Append our network_policies (just the rules, not version/filesystem)
-cat >> "$MERGED_POLICY" << 'POLICY'
-  delivery_service:
-    name: delivery_service
-    endpoints:
-    - host: www.ubereats.com
-      port: 443
-      access: full
-    - host: "*.ubereats.com"
-      port: 443
-      access: full
-    - host: "*.uber.com"
-      port: 443
-      access: full
-    - host: auth.uber.com
-      port: 443
-      access: full
-    - host: "*.ubercdn.com"
-      port: 443
-      access: full
-    binaries:
-    - path: /usr/local/bin/node
-    - path: /usr/bin/node
-    - path: /sandbox/.cache/ms-playwright/chromium-*/chrome-linux/chrome
-  playwright_setup:
-    name: playwright_setup
-    endpoints:
-    - host: cdn.playwright.dev
-      port: 443
-      access: full
-    - host: playwright.download.prss.microsoft.com
-      port: 443
-      access: full
-    - host: playwright.azureedge.net
-      port: 443
-      access: full
-    - host: storage.googleapis.com
-      port: 443
-      access: full
-    - host: edgedl.me.gvt1.com
-      port: 443
-      access: full
-    binaries:
-    - path: /usr/local/bin/node
-    - path: /usr/bin/node
-POLICY
-
-openshell policy set --policy "$MERGED_POLICY" --wait "$SANDBOX_NAME"
-rm -f "$MERGED_POLICY"
+step "Setting default sandbox"
+python3 -c "
+import json
+path = '$HOME/.nemoclaw/sandboxes.json'
+with open(path) as f:
+    d = json.load(f)
+d['defaultSandbox'] = '$SANDBOX_NAME'
+with open(path, 'w') as f:
+    json.dump(d, f, indent=2)
+print('    Default sandbox: $SANDBOX_NAME')
+"
 ok
 
 # =========================================================================
-# Step 7: Deploy code into sandbox
+# Step 8: Merge network policy (add delivery service + Playwright CDN)
 # =========================================================================
+step "Adding delivery service network policy"
 
-# Ensure SSH config
-if ! grep -q "openshell-${SANDBOX_NAME}" ~/.ssh/config 2>/dev/null; then
-    openshell sandbox ssh-config "$SANDBOX_NAME" >> ~/.ssh/config
-fi
+# Wait for sandbox to be ready
+for i in $(seq 1 12); do
+    phase=$(openshell sandbox list 2>&1 | grep "$SANDBOX_NAME" | awk '{print $NF}')
+    if echo "$phase" | grep -qi "ready"; then break; fi
+    sleep 5
+done
+
+# Get current policy, merge our additions (preserves filesystem/landlock/process)
+openshell policy get --full "$SANDBOX_NAME" 2>&1 | sed '1,/^---$/d' > /tmp/lc-current-policy.yaml
+
+python3 << 'PY'
+import yaml
+with open("/tmp/lc-current-policy.yaml") as f:
+    policy = yaml.safe_load(f)
+np = policy.setdefault("network_policies", {})
+np["playwright_cdn"] = {
+    "name": "playwright_cdn",
+    "endpoints": [
+        {"host": "cdn.playwright.dev", "port": 443, "access": "full"},
+        {"host": "playwright.download.prss.microsoft.com", "port": 443, "access": "full"},
+    ],
+    "binaries": [{"path": "/usr/local/bin/node"}],
+}
+np["delivery_service"] = {
+    "name": "delivery_service",
+    "endpoints": [
+        {"host": "www.ubereats.com", "port": 443, "access": "full"},
+        {"host": "*.ubereats.com", "port": 443, "access": "full"},
+        {"host": "*.uber.com", "port": 443, "access": "full"},
+        {"host": "*.ubercdn.com", "port": 443, "access": "full"},
+    ],
+    "binaries": [
+        {"path": "/usr/local/bin/node"},
+        {"path": "/sandbox/.cache/ms-playwright/chromium-*/chrome-linux/chrome"},
+    ],
+}
+with open("/tmp/lc-merged-policy.yaml", "w") as f:
+    yaml.dump(policy, f, default_flow_style=False)
+PY
+
+openshell policy set --policy /tmp/lc-merged-policy.yaml --wait "$SANDBOX_NAME" 2>&1 | tail -2
+rm -f /tmp/lc-current-policy.yaml /tmp/lc-merged-policy.yaml
+ok
+
+# =========================================================================
+# Step 9: Upload code to sandbox
+# =========================================================================
+step "Deploying to sandbox"
+
+# Add SSH config if needed
+openshell sandbox ssh-config "$SANDBOX_NAME" >> ~/.ssh/config 2>/dev/null || true
 SSH_HOST="openshell-${SANDBOX_NAME}"
 
-step "Deploying hungry-cli to sandbox"
-openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$INSTALL_DIR/../hungry-cli" /sandbox/hungry-cli
-ok
+# Wait for sandbox to be fully ready after policy change
+for i in $(seq 1 12); do
+    if ssh "$SSH_HOST" 'echo ok' 2>/dev/null; then break; fi
+    sleep 5
+done
 
-step "Deploying lunchclaw bot to sandbox"
-openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$INSTALL_DIR/sandbox-app" /sandbox/lunchclaw
-ok
-
-step "Uploading workspace files"
-openshell sandbox upload "$SANDBOX_NAME" "$INSTALL_DIR/workspace" /sandbox/.openclaw/workspace
-ok
-
-# =========================================================================
-# Step 8: Install dependencies in sandbox
-# =========================================================================
-step "Installing dependencies in sandbox"
+openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$INSTALL_DIR/../hungry-cli" /sandbox/hungry-cli 2>&1 | tail -1
+openshell sandbox upload "$SANDBOX_NAME" "$INSTALL_DIR/workspace" /sandbox/.openclaw/workspace 2>&1 | tail -1
 ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && npm install --omit=dev 2>&1 | tail -1'
-ssh "$SSH_HOST" 'cd /sandbox/lunchclaw && npm install --omit=dev 2>&1 | tail -1'
-ok
-
-step "Installing browser engine"
-ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && node node_modules/playwright/cli.js install chromium 2>&1 | grep -E "downloaded|Failed" || true'
 ok
 
 # =========================================================================
-# Step 9: Configure sandbox environment
+# Step 10: Install Chromium in sandbox
 # =========================================================================
-step "Configuring sandbox environment"
-# NemoClaw intercepts TELEGRAM_BOT_TOKEN and replaces it with a proxy
-# placeholder. Use LUNCHCLAW_BOT_TOKEN so our bot gets the real token,
-# while NemoClaw's proxy still handles credential injection for its bridge.
-ssh "$SSH_HOST" "cat > /sandbox/.env << EOF
-LUNCHCLAW_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-TELEGRAM_ALLOWED_USER_ID=${TELEGRAM_ALLOWED_USER_ID}
-DELIVERY_ADDRESS=${DELIVERY_ADDRESS}
-HUNGRY_CLI_PATH=/sandbox/hungry-cli/dist/cli.js
-BUDGET_MAX=30
-EOF"
+step "Installing browser engine in sandbox"
+ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && node node_modules/playwright/cli.js install chromium 2>&1 | grep -E "downloaded|100%"' 2>&1 || warn "Chromium install may have failed"
 ok
 
 # =========================================================================
-# Step 10: Delivery service auth (runs locally, uploads session)
+# Step 11: Auth (locally with bundled Chromium, then upload to sandbox)
 # =========================================================================
 step "Delivery service authentication"
 echo ""
-echo "    You need to log into your delivery service once."
-echo "    This opens Chrome on YOUR machine, then uploads the"
-echo "    session to the secure sandbox."
+echo "    This opens a Chromium browser on your machine to log in."
+echo "    Log in to your delivery service and set your delivery address."
+echo "    Then press Enter in the terminal."
 echo ""
 
-AUTH_DIR="$HOME/.config/hungry/ubereats"
-if [ -d "$AUTH_DIR/chrome-profile" ] && [ -f "$AUTH_DIR/auth.json" ]; then
-    echo "    Found existing local session."
+AUTH_DIR="/tmp/hungry-sandbox-auth"
+
+if [ -d "$AUTH_DIR/ubereats/chrome-profile" ] && [ -f "$AUTH_DIR/ubereats/auth.json" ]; then
+    echo "    Found existing auth session."
     read -rp "    Use it? (Y/n): " use_existing
-    if [ "${use_existing:-y}" != "n" ] && [ "${use_existing:-y}" != "N" ]; then
-        openshell sandbox upload "$SANDBOX_NAME" "$AUTH_DIR" /sandbox/.config/hungry/ubereats
-        ok
-    else
-        echo "    Opening Chrome..."
-        (cd "$INSTALL_DIR/../hungry-cli" && node dist/cli.js auth)
-        openshell sandbox upload "$SANDBOX_NAME" "$AUTH_DIR" /sandbox/.config/hungry/ubereats
-        ok
-    fi
-else
-    echo "    Opening Chrome..."
-    (cd "$INSTALL_DIR/../hungry-cli" && node dist/cli.js auth)
-    if [ -d "$AUTH_DIR/chrome-profile" ]; then
-        openshell sandbox upload "$SANDBOX_NAME" "$AUTH_DIR" /sandbox/.config/hungry/ubereats
-        ok
-    else
-        warn "Auth may not have completed. Run './lunchclaw auth' later."
+    if [ "${use_existing:-y}" = "n" ] || [ "${use_existing:-y}" = "N" ]; then
+        rm -rf "$AUTH_DIR"
     fi
 fi
 
+if [ ! -d "$AUTH_DIR/ubereats/chrome-profile" ]; then
+    (cd "$INSTALL_DIR/../hungry-cli" && HUNGRY_USE_BUNDLED=1 HUNGRY_DATA_DIR="$AUTH_DIR" node dist/cli.js auth)
+fi
+
+if [ -d "$AUTH_DIR/ubereats" ]; then
+    openshell sandbox upload "$SANDBOX_NAME" "$AUTH_DIR/ubereats" /sandbox/.config/hungry/ubereats 2>&1 | tail -1
+    echo "    Auth session uploaded to sandbox."
+else
+    warn "Auth may not have completed. Run auth manually later."
+fi
+ok
+
 # =========================================================================
-# Step 11: Start the bot
+# Step 12: Start Telegram bridge
 # =========================================================================
-step "Starting LunchClaw"
-ssh "$SSH_HOST" 'pkill -f "node.*bot.js" 2>/dev/null || true'
+step "Starting Telegram bridge"
+
+# Kill any existing bridge
+pkill -f "telegram-bridge" 2>/dev/null || true
 sleep 1
-ssh "$SSH_HOST" 'cd /sandbox/lunchclaw && nohup node dist/bot.js >> /sandbox/lunchclaw.log 2>&1 &'
-sleep 2
-if ssh "$SSH_HOST" 'pgrep -f "node.*bot.js" > /dev/null 2>&1'; then
+
+# Start bridge directly with correct env vars
+TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+NVIDIA_API_KEY="${NVIDIA_API_KEY:-}" \
+SANDBOX_NAME="$SANDBOX_NAME" \
+nohup node ~/.nemoclaw/source/scripts/telegram-bridge.js >> /tmp/lunchclaw-bridge.log 2>&1 &
+BRIDGE_PID=$!
+
+sleep 3
+if kill -0 $BRIDGE_PID 2>/dev/null; then
+    echo "    Bridge running (PID $BRIDGE_PID)"
     ok
 else
-    fail "Bot failed to start. Check: ssh $SSH_HOST 'tail -20 /sandbox/lunchclaw.log'"
+    tail -5 /tmp/lunchclaw-bridge.log 2>/dev/null
+    fail "Bridge failed to start. Check /tmp/lunchclaw-bridge.log"
 fi
 
 # =========================================================================
@@ -356,14 +321,9 @@ echo -e "${BOLD}  ==============================${NC}"
 echo -e "${BOLD}  LunchClaw is ready!${NC}"
 echo -e "${BOLD}  ==============================${NC}"
 echo ""
-echo "  Message your bot on Telegram: \"hungry, something with chicken\""
+echo "  Message your bot on Telegram: \"I'm hungry, feed me\""
 echo ""
-echo "  Manage your bot:"
-echo "    cd $INSTALL_DIR"
-echo "    ./lunchclaw status     Check health"
-echo "    ./lunchclaw logs       Stream logs"
-echo "    ./lunchclaw stop       Stop the bot"
-echo "    ./lunchclaw start      Start the bot"
-echo "    ./lunchclaw update     Rebuild and redeploy"
-echo "    ./lunchclaw auth       Re-authenticate delivery service"
-echo "    ./lunchclaw destroy    Remove sandbox (permanent)"
+echo "  Bridge log:    tail -f /tmp/lunchclaw-bridge.log"
+echo "  Sandbox logs:  nemoclaw $SANDBOX_NAME logs --follow"
+echo "  Stop bridge:   pkill -f telegram-bridge"
+echo "  Restart:       TELEGRAM_BOT_TOKEN=... SANDBOX_NAME=$SANDBOX_NAME node ~/.nemoclaw/source/scripts/telegram-bridge.js"
