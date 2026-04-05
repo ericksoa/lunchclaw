@@ -179,9 +179,13 @@ network_policies:
       - host: "*.ubercdn.com"
         port: 443
         access: full
+      - host: "*.cloudfront.net"
+        port: 443
+        access: full
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /sandbox/.cache/ms-playwright/chromium-*/chrome-linux/chrome }
+      - { path: /sandbox/.cache/ms-playwright/chromium_headless_shell-*/chrome-linux/headless_shell }
 PRESET
 
     cat > "$PRESET_DIR/playwright-cdn.yaml" << 'PRESET'
