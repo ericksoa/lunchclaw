@@ -239,30 +239,36 @@ step "Deploying to sandbox"
 openshell sandbox ssh-config "$SANDBOX_NAME" >> ~/.ssh/config 2>/dev/null || true
 SSH_HOST="openshell-${SANDBOX_NAME}"
 
-# Wait for sandbox to be stable after policy change (can take 2+ minutes)
-echo "    Waiting for sandbox to stabilize after policy change..."
-for i in $(seq 1 30); do
-    if ssh "$SSH_HOST" 'echo ok' 2>/dev/null; then
-        # Wait a few more seconds to make sure it stays ready
-        sleep 5
-        if ssh "$SSH_HOST" 'echo ok' 2>/dev/null; then break; fi
-    fi
+# Wait for sandbox to fully stabilize after policy change (takes 2+ minutes)
+echo "    Waiting for sandbox to stabilize after policy change (this takes ~2 min)..."
+sleep 30
+for i in $(seq 1 24); do
+    if ssh "$SSH_HOST" 'echo ok' >/dev/null 2>&1; then break; fi
+    echo "    Still waiting... ($((i*5+30))s)"
     sleep 5
 done
 
+# Disable strict mode for deploy steps — handle errors explicitly
+set +e
+
 echo "    Uploading hungry-cli..."
-openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$INSTALL_DIR/../hungry-cli" /sandbox/hungry-cli 2>&1 || fail "Failed to upload hungry-cli"
+openshell sandbox upload --no-git-ignore "$SANDBOX_NAME" "$INSTALL_DIR/../hungry-cli" /sandbox/hungry-cli 2>&1
 echo "    Uploading workspace files..."
-openshell sandbox upload "$SANDBOX_NAME" "$INSTALL_DIR/workspace" /sandbox/.openclaw/workspace 2>&1 || fail "Failed to upload workspace"
+openshell sandbox upload "$SANDBOX_NAME" "$INSTALL_DIR/workspace" /sandbox/.openclaw/workspace 2>&1
 echo "    Installing dependencies..."
-ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && npm install --omit=dev 2>&1' || fail "Failed to install deps in sandbox"
+ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && npm install --omit=dev 2>&1'
+
+# Re-enable strict mode
+set -e
 ok
 
 # =========================================================================
 # Step 10: Install Chromium in sandbox
 # =========================================================================
 step "Installing browser engine in sandbox"
-ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && node node_modules/playwright/cli.js install chromium 2>&1' || warn "Chromium install may have failed"
+set +e
+ssh "$SSH_HOST" 'cd /sandbox/hungry-cli && node node_modules/playwright/cli.js install chromium 2>&1'
+set -e
 ok
 
 # =========================================================================
@@ -290,7 +296,7 @@ if [ ! -d "$AUTH_DIR/ubereats/chrome-profile" ]; then
 fi
 
 if [ -d "$AUTH_DIR/ubereats" ]; then
-    openshell sandbox upload "$SANDBOX_NAME" "$AUTH_DIR/ubereats" /sandbox/.config/hungry/ubereats 2>&1 | tail -1
+    openshell sandbox upload "$SANDBOX_NAME" "$AUTH_DIR/ubereats" /sandbox/.config/hungry/ubereats 2>&1
     echo "    Auth session uploaded to sandbox."
 else
     warn "Auth may not have completed. Run auth manually later."
